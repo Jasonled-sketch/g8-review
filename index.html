@@ -101,6 +101,17 @@ button{font:inherit; color:inherit; border:0; cursor:pointer;}
 .empty{color:var(--muted); text-align:center; padding:30px 10px; font-size:.95rem;}
 .ver{color:var(--muted); font-size:.75rem; text-align:center; margin-top:22px;}
 
+/* 統計圖表 */
+.today-card{
+  background:var(--card); border-radius:var(--r); padding:14px 16px;
+  font-size:1.02rem; font-weight:700; margin-bottom:4px;
+}
+.today-card .tc-sub{color:var(--muted); font-size:.82rem; font-weight:400; margin-top:2px;}
+.chart-card{background:var(--card); border-radius:var(--r); padding:12px 10px 8px;}
+.chart-card svg{display:block; width:100%; height:auto;}
+.chart-legend{display:flex; flex-wrap:wrap; gap:6px 14px; padding:8px 6px 4px; font-size:.8rem; color:var(--muted);}
+.chart-legend .lg-dot{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px;}
+
 /* 底部導覽 */
 nav{
   position:fixed; bottom:0; left:0; right:0; z-index:10;
@@ -163,6 +174,13 @@ nav .ico{font-size:1.25rem; line-height:1;}
   <!-- 統計 -->
   <section id="view-stats" class="hidden">
     <h1>學習統計</h1>
+    <div class="today-card" id="statToday"></div>
+    <h2>近 14 天每日答題</h2>
+    <div class="chart-card" id="chartDaily"></div>
+    <h2>正確率趨勢(近 14 天)</h2>
+    <div class="chart-card" id="chartTrend"></div>
+    <h2>科目答題分布</h2>
+    <div class="chart-card" id="chartSubj"></div>
     <h2>各科表現</h2>
     <div id="statSubj"></div>
     <h2>最弱單元(答過 ≥3 題)</h2>
@@ -186,12 +204,32 @@ nav .ico{font-size:1.25rem; line-height:1;}
 
 <script>
 'use strict';
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.1.0';
 const LS_KEY = 'g8review_v1';
 
 /*CORE-START*/
 const Core = {
-  newStore(){ return { v:1, subj:{}, unit:{}, wrong:{} }; },
+  newStore(){ return { v:1, subj:{}, unit:{}, wrong:{}, days:{} }; },
+  // 當地日期字串 YYYY-MM-DD(本地時區,不用 toISOString 以免跨日誤差)
+  localDate(d){
+    d = d || new Date();
+    const p = function(n){ return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  },
+  // 取近 n 天(含今日)序列,舊→新;每天 {date, m, d, a, c},無紀錄補 0
+  lastNDays(store, n, base){
+    base = base || new Date();
+    const days = store.days || {};
+    const out = [];
+    for(let i = n - 1; i >= 0; i--){
+      const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() - i);
+      const key = Core.localDate(d);
+      const rec = days[key];
+      out.push({ date:key, m:d.getMonth() + 1, d:d.getDate(),
+                 a:rec ? (rec.a || 0) : 0, c:rec ? (rec.c || 0) : 0 });
+    }
+    return out;
+  },
   // 題幹短 hash(djb2 → 36 進位),題庫增刪題也不會錯位
   qhash(str){
     str = String(str);
@@ -228,10 +266,17 @@ const Core = {
     });
     return pool;
   },
-  // 記一筆作答:科別/單元統計 + 錯題本進出(答錯進本、累計答對2次移出、再錯歸零)
-  record(store, item, correct){
+  // 記一筆作答:科別/單元統計 + 每日紀錄 + 錯題本進出(答錯進本、累計答對2次移出、再錯歸零)
+  // date 可省略,預設當地今日(YYYY-MM-DD)
+  record(store, item, correct, date){
     const s = store.subj[item.subj] || (store.subj[item.subj] = { a:0, c:0 });
     s.a++; if(correct) s.c++;
+    if(!store.days) store.days = {};
+    const dk = date || Core.localDate();
+    const day = store.days[dk] || (store.days[dk] = { a:0, c:0, subj:{} });
+    day.a++; if(correct) day.c++;
+    const ds = day.subj[item.subj] || (day.subj[item.subj] = { a:0, c:0 });
+    ds.a++; if(correct) ds.c++;
     const u = store.unit[item.unitId] || (store.unit[item.unitId] = { a:0, c:0, s:item.subj });
     u.a++; if(correct) u.c++;
     if(correct){
@@ -279,7 +324,13 @@ function subjLoaded(k){
 function loadStore(){
   try{
     const raw = localStorage.getItem(LS_KEY);
-    if(raw){ const s = JSON.parse(raw); if(s && s.v === 1) return s; }
+    if(raw){
+      const s = JSON.parse(raw);
+      if(s && s.v === 1){
+        if(!s.days) s.days = {}; /* 舊資料(v1 無 days)就地升級,錯題本與統計不動 */
+        return s;
+      }
+    }
   }catch(e){}
   return Core.newStore();
 }
@@ -529,8 +580,141 @@ function retestWrong(){
 }
 document.getElementById('btnRetestWrong').addEventListener('click', retestWrong);
 
+/* ---------- 統計:圖表(inline SVG,無外部函式庫) ---------- */
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+/* Y 軸好看刻度:回傳 {max, step} */
+function niceScale(maxVal){
+  if(maxVal <= 4) return { max:4, step:1 };
+  const steps = [1,2,5,10,20,25,50,100,200,500];
+  for(const st of steps){
+    if(maxVal <= st * 4) return { max:Math.ceil(maxVal / st) * st, step:st };
+  }
+  const st = Math.pow(10, Math.ceil(Math.log10(maxVal / 4)));
+  return { max:Math.ceil(maxVal / st) * st, step:st };
+}
+/* 今日摘要卡 */
+function renderToday(){
+  const days = Core.lastNDays(store, 1);
+  const t = days[0];
+  const rate = t.a ? Math.round(100 * t.c / t.a) : null;
+  document.getElementById('statToday').innerHTML =
+    '今日已答 ' + t.a + ' 題.正確率 ' + (rate === null ? '--' : rate + '%') +
+    '<div class="tc-sub">' + t.m + '/' + t.d + '.答對 ' + t.c + ' 題</div>';
+}
+/* 近 14 天每日答題數:雙色堆疊長條(下=答對 good、上=答錯 bad) */
+function renderDailyChart(){
+  const days = Core.lastNDays(store, 14);
+  const W = 360, H = 190, padL = 30, padR = 6, padT = 10, padB = 24;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const sc = niceScale(Math.max.apply(null, days.map(d => d.a)));
+  const slot = plotW / 14, barW = Math.min(16, slot * 0.62);
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="近14天每日答題數長條圖">';
+  /* Y 軸格線與刻度 */
+  for(let v = 0; v <= sc.max; v += sc.step){
+    const y = padT + plotH - v / sc.max * plotH;
+    s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--line)" stroke-width="' + (v === 0 ? 1 : 0.5) + '"/>';
+    s += '<text x="' + (padL - 5) + '" y="' + (y + 3.5) + '" text-anchor="end" font-size="10" fill="var(--muted)">' + v + '</text>';
+  }
+  days.forEach((d, i) => {
+    const cx = padL + slot * i + slot / 2;
+    const x = cx - barW / 2;
+    const baseY = padT + plotH;
+    if(d.a > 0){
+      const hAll = d.a / sc.max * plotH;
+      const hOk = d.c / sc.max * plotH;
+      const hNg = hAll - hOk;
+      if(hNg > 0) s += '<rect x="' + x + '" y="' + (baseY - hAll) + '" width="' + barW + '" height="' + hNg + '" rx="1.5" fill="var(--bad)"/>';
+      if(hOk > 0) s += '<rect x="' + x + '" y="' + (baseY - hOk) + '" width="' + barW + '" height="' + hOk + '" rx="1.5" fill="var(--good)"/>';
+    } else {
+      /* 空條:無資料日也佔位 */
+      s += '<rect x="' + x + '" y="' + (baseY - 2) + '" width="' + barW + '" height="2" rx="1" fill="var(--line)"/>';
+    }
+    /* X 軸標籤:從今天往回隔天標一次,避免擁擠 */
+    if((days.length - 1 - i) % 2 === 0){
+      s += '<text x="' + cx + '" y="' + (H - 8) + '" text-anchor="middle" font-size="9" fill="var(--muted)">' + d.m + '/' + d.d + '</text>';
+    }
+  });
+  s += '</svg>';
+  s += '<div class="chart-legend">' +
+    '<span><span class="lg-dot" style="background:var(--good)"></span>答對</span>' +
+    '<span><span class="lg-dot" style="background:var(--bad)"></span>答錯</span></div>';
+  document.getElementById('chartDaily').innerHTML = s;
+}
+/* 近 14 天正確率趨勢折線,無作答日留空不連線 */
+function renderTrendChart(){
+  const days = Core.lastNDays(store, 14);
+  const W = 360, H = 170, padL = 34, padR = 8, padT = 10, padB = 24;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const slot = plotW / 14;
+  const pt = i => padL + slot * i + slot / 2;
+  const py = rate => padT + plotH - rate / 100 * plotH;
+  let s = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="近14天正確率趨勢折線圖">';
+  [0, 25, 50, 75, 100].forEach(v => {
+    const y = py(v);
+    s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '" stroke="var(--line)" stroke-width="' + (v === 0 ? 1 : 0.5) + '"/>';
+    s += '<text x="' + (padL - 5) + '" y="' + (y + 3.5) + '" text-anchor="end" font-size="10" fill="var(--muted)">' + v + '%</text>';
+  });
+  /* 分段路徑:遇到無作答日就斷線 */
+  let path = '', pen = false, hasData = false;
+  days.forEach((d, i) => {
+    if(d.a > 0){
+      hasData = true;
+      const x = pt(i), y = py(Math.round(100 * d.c / d.a));
+      path += (pen ? ' L' : ' M') + x.toFixed(1) + ' ' + y.toFixed(1);
+      pen = true;
+    } else {
+      pen = false;
+    }
+    if((days.length - 1 - i) % 2 === 0){
+      s += '<text x="' + pt(i) + '" y="' + (H - 8) + '" text-anchor="middle" font-size="9" fill="var(--muted)">' + d.m + '/' + d.d + '</text>';
+    }
+  });
+  if(path) s += '<path d="' + path.trim() + '" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+  days.forEach((d, i) => {
+    if(d.a > 0){
+      s += '<circle cx="' + pt(i) + '" cy="' + py(Math.round(100 * d.c / d.a)) + '" r="3" fill="var(--accent)"/>';
+    }
+  });
+  if(!hasData){
+    s += '<text x="' + (W / 2) + '" y="' + (padT + plotH / 2) + '" text-anchor="middle" font-size="12" fill="var(--muted)">還沒有作答紀錄</text>';
+  }
+  s += '</svg>';
+  document.getElementById('chartTrend').innerHTML = s;
+}
+/* 科目答題分布:水平堆疊條 + 圖例(科名+題數+百分比) */
+function renderSubjChart(){
+  const box = document.getElementById('chartSubj');
+  const rows = SUBJECTS.map(sj => {
+    const st = Core.subjectStats(store, sj.key);
+    return { name:sj.name, color:sj.color, a:st.a };
+  });
+  const total = rows.reduce((t, r) => t + r.a, 0);
+  if(!total){
+    box.innerHTML = '<div class="empty" style="padding:18px 10px">還沒有作答紀錄,測一回就有分布圖</div>';
+    return;
+  }
+  const W = 360, BH = 26;
+  let s = '<svg viewBox="0 0 ' + W + ' ' + (BH + 8) + '" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="科目答題分布堆疊條">';
+  let x = 0;
+  rows.forEach(r => {
+    if(!r.a) return;
+    const w = r.a / total * W;
+    s += '<rect x="' + x.toFixed(1) + '" y="4" width="' + w.toFixed(1) + '" height="' + BH + '" fill="' + r.color + '"/>';
+    x += w;
+  });
+  s += '</svg>';
+  s += '<div class="chart-legend">' + rows.filter(r => r.a).map(r =>
+    '<span><span class="lg-dot" style="background:' + r.color + '"></span>' + esc(r.name) +
+    ' ' + r.a + ' 題(' + Math.round(100 * r.a / total) + '%)</span>').join('') + '</div>';
+  box.innerHTML = s;
+}
+
 /* ---------- 統計 ---------- */
 function renderStats(){
+  renderToday();
+  renderDailyChart();
+  renderTrendChart();
+  renderSubjChart();
   const box = document.getElementById('statSubj');
   box.textContent = '';
   SUBJECTS.forEach(s => {

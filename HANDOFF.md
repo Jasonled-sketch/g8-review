@@ -68,6 +68,15 @@ window.QB["math"] = {
 6. manifest+SW 離線 → 通過(addAll precache,cache 名帶版本)
 7. 375px 無橫向捲動、點擊區 ≥44px → 通過(實測 scrollWidth=375)
 
+## v1.1.0 工單(2026-07-07 追加)
+目標:五科題庫各擴充到 250 題;統計頁新增每日答題進度與分析分布圖。
+**驗收標準:**
+A1. 五科各 ≥250 題,既有題目一字不改(qhash 穩定性),新題無重複題幹、schema 同前、8a/8b 與各單元合理分佈、答案正確。
+A2. 每次作答按當地日期記錄(store.days),重整不丟。
+A3. 統計頁新增:近 14 天每日答題數長條圖(含答對數對比)、科目答題分布圖、正確率趨勢;375px 寬正常顯示、無外部函式庫(inline SVG)。
+A4. APP_VERSION 與 sw cache bump 1.1.0,離線可用不變。
+A5. 舊 localStorage(v1 無 days)升級不壞、錯題本保留。
+
 ## 遺留事項
 - 未 commit / 未部署(等 Jason 決定;建議上 GitHub Pages 新 repo)
 - 事故記錄:初版 App 執行者曾用假資料覆蓋 math.js/chinese.js,已由 Codex/Claude 重建
