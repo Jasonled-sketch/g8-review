@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+    function isSignedIn(){ return request.auth != null; }
+    function uid(){ return request.auth.uid; }
+    function isG8Parent(){ return isSignedIn() && request.auth.token.email in ['covernself@gmail.com']; }
+
+    // ---- speed-training-base(小孩訓練基地)既有集合 ----
+    match /users/{userId}{
+      allow read: if isSignedIn() && (uid() == userId || resource.data.email == request.auth.token.email);
+      allow write: if isSignedIn() && uid() == userId;
+    }
+    match /childProfiles/{childId}{
+      allow read, write: if isSignedIn() &&
+        (uid() == childId ||
+         exists(/databases/$(db)/documents/users/$(uid())) &&
+         childId in get(/databases/$(db)/documents/users/$(uid())).data.linkedChildIds);
+    }
+    match /tasks/{taskId}{
+      allow read, write: if isSignedIn();
+    }
+    match /reviews/{reviewId}{
+      allow read, write: if isSignedIn();
+    }
+    match /rewardSessions/{sessionId}{
+      allow read, write: if isSignedIn();
+    }
+    match /logs/{logId}{
+      allow read, write: if isSignedIn();
+    }
+
+    // ---- g8-review(國二複習快測)----
+    // 小孩:只能讀寫自己的文件;家長:可讀全部
+    match /g8review/{userId}{
+      allow read, write: if isSignedIn() && uid() == userId;
+      allow read: if isG8Parent();
+    }
+  }
+}
