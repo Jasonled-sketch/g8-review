@@ -1,7 +1,7 @@
 /* 國二五科複習快測 service worker — cache-first
    改版務必 bump APP_VERSION(與 index.html 內 APP_VERSION 同步),才會更新快取 */
 'use strict';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.1';
 const CACHE_NAME = 'g8review-' + APP_VERSION;
 
 /* 相對路徑,支援 GitHub Pages 子路徑部署 */
@@ -37,6 +37,8 @@ self.addEventListener('activate', function(e){
 
 self.addEventListener('fetch', function(e){
   if(e.request.method !== 'GET') return;
+  /* 非同源請求(Firebase SDK/API 等)不攔截、不快取,直接走網路 */
+  if(e.request.url.indexOf(self.location.origin) !== 0) return;
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(function(hit){
       if(hit) return hit;

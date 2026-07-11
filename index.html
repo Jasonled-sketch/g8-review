@@ -112,6 +112,24 @@ button{font:inherit; color:inherit; border:0; cursor:pointer;}
 .chart-legend{display:flex; flex-wrap:wrap; gap:6px 14px; padding:8px 6px 4px; font-size:.8rem; color:var(--muted);}
 .chart-legend .lg-dot{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px;}
 
+/* 登入同步列 */
+.auth-bar{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  min-height:34px; font-size:.78rem; color:var(--muted); margin-bottom:6px;}
+.auth-btn{background:var(--card); border:1px solid var(--line); border-radius:9px;
+  color:var(--muted); font-size:.78rem; padding:8px 14px; min-height:44px;}
+.auth-name{color:var(--text); font-weight:700;}
+.auth-status.ok{color:var(--good);} .auth-status.err{color:var(--bad);}
+
+/* 家長儀表板 */
+.kid-card{background:var(--card2); border:1px solid var(--line); border-radius:var(--r);
+  padding:12px; margin-bottom:14px;}
+.kid-card .stat-row{background:var(--card);}
+.kid-card .chart-card{background:var(--card); margin-bottom:8px; padding:10px 8px 6px;}
+.kid-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px;}
+.kid-name{font-weight:800; font-size:1.05rem; word-break:break-all;}
+.kid-upd{color:var(--muted); font-size:.75rem; flex:none;}
+.kid-today{font-size:.9rem; margin-bottom:8px;}
+
 /* 底部導覽 */
 nav{
   position:fixed; bottom:0; left:0; right:0; z-index:10;
@@ -132,6 +150,7 @@ nav .ico{font-size:1.25rem; line-height:1;}
 <main>
   <!-- 首頁 -->
   <section id="view-home">
+    <div class="auth-bar" id="authBar"></div>
     <h1>國二五科複習快測</h1>
     <p class="sub">勾選科目,隨機抽 10 題快速測驗</p>
     <div class="subj-grid" id="subjGrid"></div>
@@ -187,12 +206,21 @@ nav .ico{font-size:1.25rem; line-height:1;}
     <div id="statWeak"></div>
     <div class="ver" id="verLine"></div>
   </section>
+
+  <!-- 家長儀表板(僅家長帳號登入時出現) -->
+  <section id="view-parent" class="hidden">
+    <h1>家長儀表板</h1>
+    <p class="sub">孩子們的雲端學習紀錄</p>
+    <button class="btn ghost small" id="btnParentRefresh">重新整理</button>
+    <div id="parentList" style="margin-top:14px"></div>
+  </section>
 </main>
 
 <nav>
   <button data-tab="home" class="on"><span class="ico">&#127968;</span>首頁</button>
   <button data-tab="wrong"><span class="ico">&#128213;</span>錯題本</button>
   <button data-tab="stats"><span class="ico">&#128202;</span>統計</button>
+  <button data-tab="parent" id="navParent" class="hidden"><span class="ico">&#128106;</span>家長</button>
 </nav>
 
 <!-- 題庫(缺檔時該科自動停用,App 其餘功能照常) -->
@@ -204,12 +232,12 @@ nav .ico{font-size:1.25rem; line-height:1;}
 
 <script>
 'use strict';
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.1';
 const LS_KEY = 'g8review_v1';
 
 /*CORE-START*/
 const Core = {
-  newStore(){ return { v:1, subj:{}, unit:{}, wrong:{}, days:{} }; },
+  newStore(){ return { v:1, subj:{}, unit:{}, wrong:{}, days:{}, wrongGone:{} }; },
   // 當地日期字串 YYYY-MM-DD(本地時區,不用 toISOString 以免跨日誤差)
   localDate(d){
     d = d || new Date();
@@ -281,7 +309,15 @@ const Core = {
     u.a++; if(correct) u.c++;
     if(correct){
       const w = store.wrong[item.id];
-      if(w){ w.k = (w.k || 0) + 1; if(w.k >= 2) delete store.wrong[item.id]; }
+      if(w){
+        w.k = (w.k || 0) + 1;
+        w.t = Date.now(); /* 連對進度也算最新狀態,合併時才不會被舊紀錄壓回 */
+        if(w.k >= 2){
+          delete store.wrong[item.id];
+          if(!store.wrongGone) store.wrongGone = {};
+          store.wrongGone[item.id] = Date.now(); /* 墓碑:合併時壓過另一裝置的舊錯題 */
+        }
+      }
     } else {
       store.wrong[item.id] = { k:0, t:Date.now() };
     }
@@ -303,10 +339,327 @@ const Core = {
     });
     out.sort(function(x, y){ return y.err - x.err || y.a - x.a; });
     return out.slice(0, 3);
+  },
+  /* --- 雲端同步(v1.2.1) --- */
+  // 逐 key 合併兩個 {key:{a,c,...}} 統計表:同 key 取答題數 a 較大的一邊,a 相同取 c 較大者
+  mergeMapByA(m1, m2){
+    m1 = m1 || {}; m2 = m2 || {};
+    const out = {};
+    Object.keys(m1).forEach(function(k){ if(m1[k]) out[k] = m1[k]; });
+    Object.keys(m2).forEach(function(k){
+      if(!m2[k]) return;
+      if(!(k in out)){ out[k] = m2[k]; return; }
+      const a1 = out[k].a || 0, a2 = m2[k].a || 0;
+      if(a2 > a1 || (a2 === a1 && (m2[k].c || 0) > (out[k].c || 0))) out[k] = m2[k];
+    });
+    return out;
+  },
+  // 二選一:取 a 較大者,tie 取 c 大者(x/y 可為 null)
+  pickByA(x, y){
+    if(!x) return y || null;
+    if(!y) return x;
+    const xa = x.a || 0, ya = y.a || 0;
+    if(ya > xa) return y;
+    if(ya === xa && (y.c || 0) > (x.c || 0)) return y;
+    return x;
+  },
+  WRONG_GONE_TTL: 90 * 24 * 3600 * 1000, // 墓碑保留 90 天
+  // 本地/雲端存檔合併(純函式,回傳全新深拷貝):
+  //   days:逐日逐科取 a 大者(tie 取 c),日層級 a/c 由各科加總重算
+  //   subj:由合併後 days 重算,確保每日圖與各科總表一致
+  //   unit:逐 key 取 a 大者(已知有損,可接受)
+  //   wrong:聯集,同 id 取 t 較新者且 k 取大值;wrongGone 墓碑壓過復活、90 天修剪
+  // 任一邊為 null/缺欄位皆可,mergeStores(s, null) 亦可當 normalize+deep clone 用
+  mergeStores(local, cloud){
+    const L = local || {}, C = cloud || {};
+    /* days:逐日合併 */
+    const days = {};
+    let subjLossy = false;
+    const ld = L.days || {}, cd = C.days || {};
+    const dayKeys = {};
+    Object.keys(ld).forEach(function(k){ if(ld[k]) dayKeys[k] = 1; });
+    Object.keys(cd).forEach(function(k){ if(cd[k]) dayKeys[k] = 1; });
+    Object.keys(dayKeys).forEach(function(k){
+      const dl = ld[k] || null, dc = cd[k] || null;
+      const subjKeys = {};
+      if(dl && dl.subj) Object.keys(dl.subj).forEach(function(x){ if(dl.subj[x]) subjKeys[x] = 1; });
+      if(dc && dc.subj) Object.keys(dc.subj).forEach(function(x){ if(dc.subj[x]) subjKeys[x] = 1; });
+      const subj = {};
+      let dA = 0, dC = 0;
+      Object.keys(subjKeys).forEach(function(x){
+        const rec = Core.pickByA(dl && dl.subj ? dl.subj[x] : null, dc && dc.subj ? dc.subj[x] : null);
+        if(!rec) return;
+        subj[x] = { a: rec.a || 0, c: rec.c || 0 };
+        dA += subj[x].a; dC += subj[x].c;
+      });
+      if(Object.keys(subj).length){
+        days[k] = { a: dA, c: dC, subj: subj };
+      } else { /* 舊格式(無 subj 明細)退回整日取 a 大者 */
+        const rec = Core.pickByA(dl, dc);
+        days[k] = { a: (rec && rec.a) || 0, c: (rec && rec.c) || 0, subj: {} };
+        if(((rec && rec.a) || 0) > 0) subjLossy = true;
+      }
+    });
+    /* subj:由合併後 days 重算,保證與每日圖一致;
+       若有舊格式日資料(無科目明細),重算會漏,退回逐科取大 */
+    let subj = {};
+    Object.keys(days).forEach(function(k){
+      const ds = days[k].subj || {};
+      Object.keys(ds).forEach(function(x){
+        const s = subj[x] || (subj[x] = { a:0, c:0 });
+        s.a += ds[x].a || 0; s.c += ds[x].c || 0;
+      });
+    });
+    if(subjLossy) subj = Core.mergeMapByA(L.subj, C.subj);
+    /* wrong:聯集,同 id 取 t 較新者,k 取兩邊較大值(避免連對進度回退) */
+    const wrong = {};
+    const lw = L.wrong || {}, cw = C.wrong || {};
+    Object.keys(lw).forEach(function(k){
+      if(lw[k]) wrong[k] = { k: lw[k].k || 0, t: lw[k].t || 0 };
+    });
+    Object.keys(cw).forEach(function(k){
+      const w2 = cw[k];
+      if(!w2) return;
+      if(!(k in wrong)){ wrong[k] = { k: w2.k || 0, t: w2.t || 0 }; return; }
+      const w1 = wrong[k];
+      wrong[k] = { k: Math.max(w1.k, w2.k || 0), t: Math.max(w1.t, w2.t || 0) };
+    });
+    /* wrongGone:聯集取新;墓碑比錯題新 → 錯題不進合併結果;逾 90 天修剪 */
+    const wrongGone = {};
+    const lg = L.wrongGone || {}, cg = C.wrongGone || {};
+    const now = Date.now();
+    [lg, cg].forEach(function(g){
+      Object.keys(g).forEach(function(k){
+        const t = Number(g[k]) || 0;
+        if(t <= 0 || now - t > Core.WRONG_GONE_TTL) return;
+        if(!(k in wrongGone) || t > wrongGone[k]) wrongGone[k] = t;
+      });
+    });
+    Object.keys(wrongGone).forEach(function(k){
+      if(wrong[k] && wrongGone[k] > (wrong[k].t || 0)) delete wrong[k];
+    });
+    return JSON.parse(JSON.stringify({
+      v: 1,
+      subj: subj,
+      unit: Core.mergeMapByA(L.unit, C.unit),
+      days: days,
+      wrong: wrong,
+      wrongGone: wrongGone
+    }));
+  },
+  // 雲端資料白名單重建(防 XSS/污染):只保留已知欄位,數值強制合法化
+  //   計數欄(a,c,k)上限 1e7;時間戳欄(t,removedAt)上限 1e13;c 超過 a 時夾回 a
+  sanitizeStore(raw){
+    const MAX_CNT = 1e7, MAX_TS = 1e13, MAX_KEY = 80;
+    const num = function(v, max){
+      v = Number(v);
+      if(typeof v !== 'number' || !isFinite(v) || v < 0) return 0;
+      return Math.min(Math.floor(v), max);
+    };
+    const okKey = function(k){ return typeof k === 'string' && k.length > 0 && k.length <= MAX_KEY; };
+    const src = (raw && typeof raw === 'object') ? raw : {};
+    const out = { v:1, subj:{}, unit:{}, days:{}, wrong:{}, wrongGone:{} };
+    const cleanAC = function(rec){
+      if(!rec || typeof rec !== 'object') return null;
+      const a = num(rec.a, MAX_CNT);
+      const c = Math.min(num(rec.c, MAX_CNT), a);
+      return { a: a, c: c };
+    };
+    const eachKey = function(m, fn){
+      if(!m || typeof m !== 'object') return;
+      Object.keys(m).forEach(function(k){ if(okKey(k)) fn(k, m[k]); });
+    };
+    eachKey(src.subj, function(k, v){
+      const r = cleanAC(v); if(r) out.subj[k] = r;
+    });
+    eachKey(src.unit, function(k, v){
+      const r = cleanAC(v);
+      if(!r) return;
+      if(v && typeof v.s === 'string' && v.s.length <= MAX_KEY) r.s = v.s;
+      out.unit[k] = r;
+    });
+    eachKey(src.days, function(k, v){
+      const r = cleanAC(v);
+      if(!r) return;
+      const subj = {};
+      eachKey(v.subj, function(sk, sv){
+        const sr = cleanAC(sv); if(sr) subj[sk] = sr;
+      });
+      out.days[k] = { a: r.a, c: r.c, subj: subj };
+    });
+    eachKey(src.wrong, function(k, v){
+      if(!v || typeof v !== 'object') return;
+      out.wrong[k] = { k: num(v.k, MAX_CNT), t: num(v.t, MAX_TS) };
+    });
+    eachKey(src.wrongGone, function(k, v){
+      const t = num(v, MAX_TS);
+      if(t > 0 && Date.now() - t <= Core.WRONG_GONE_TTL) out.wrongGone[k] = t;
+    });
+    /* 墓碑一致性:比錯題紀錄新的墓碑壓掉該錯題(useCloud/家長卡路徑不經 mergeStores) */
+    Object.keys(out.wrongGone).forEach(function(k){
+      if(out.wrong[k] && out.wrongGone[k] > (out.wrong[k].t || 0)) delete out.wrong[k];
+    });
+    return out;
+  },
+  // 登入時同步決策(純函式):
+  //   cloud 不存在            → upload(把本地傳上去)
+  //   雲端較新且本地無新作答  → useCloud(採雲端)
+  //   雲端不比上次同步新      → 本地較新則 upload,否則 none
+  //   兩邊都有新資料(衝突)  → merge(mergeStores 合併後上傳)
+  // localDirty=本地自上次同步後有變動;cloudUpdatedAt/lastSyncAt=毫秒數
+  resolveSync(local, cloud, localDirty, cloudUpdatedAt, lastSyncAt){
+    if(!cloud) return { action:'upload', store: local };
+    const cloudNewer = (cloudUpdatedAt || 0) > (lastSyncAt || 0);
+    /* useCloud 用 sanitizeStore 當 normalize+深拷貝,不走 mergeStores 以免 subj 被 days 重算掉舊歷史 */
+    if(cloudNewer && !localDirty) return { action:'useCloud', store: Core.sanitizeStore(cloud) };
+    if(!cloudNewer) return { action: localDirty ? 'upload' : 'none', store: local };
+    return { action:'merge', store: Core.mergeStores(local, cloud) };
   }
 };
 if (typeof module !== 'undefined' && module.exports){ module.exports = Core; }
 /*CORE-END*/
+
+/* ---------- 雲端同步層(v1.2.0) ----------
+   adapter 由頁尾 Firebase module script 注入(依賴注入,測試可換 mock):
+   { onAuth(cb), signIn(), signOut(), fetchDoc(id), saveDoc(id,payload), listDocs() }
+   SDK 載入失敗(離線)→ setOffline(),App 其餘功能完全不受影響 */
+const PARENT_EMAILS = ['covernself@gmail.com'];
+const SYNC_LS_KEY = 'g8review_sync_v1';
+const Sync = {
+  adapter: null, user: null, offline: false, timer: 0,
+  seq: 0, inFlight: false, pending: false,   // 上傳競態防護:變動序號 + 同時只跑一個上傳
+  status: { state:'idle', msg:'' },   // idle|syncing|ok|error
+  meta: (function(){
+    try{
+      const m = JSON.parse(localStorage.getItem(SYNC_LS_KEY));
+      if(m && typeof m === 'object'){
+        return { lastSyncAt: m.lastSyncAt || 0, dirty: !!m.dirty,
+                 ownerUid: (typeof m.ownerUid === 'string') ? m.ownerUid : '' };
+      }
+    }catch(e){}
+    return { lastSyncAt: 0, dirty: false, ownerUid: '' };
+  })(),
+  saveMeta(){ try{ localStorage.setItem(SYNC_LS_KEY, JSON.stringify(Sync.meta)); }catch(e){} },
+  // 本地有新變動:序號 +1、標記 dirty + 排程 3 秒 debounce 上傳
+  markDirty(){ Sync.seq++; Sync.meta.dirty = true; Sync.saveMeta(); Sync.scheduleUpload(); },
+  setOffline(){ Sync.offline = true; Sync.adapter = null; renderAuthBar(); },
+  setStatus(state, msg){ Sync.status = { state: state, msg: msg || '' }; renderAuthBar(); },
+  errMsg(err){
+    if(!err) return '未知錯誤';
+    return String(err.code || err.message || err).slice(0, 80);
+  },
+  tsToMs(v){
+    if(!v) return 0;
+    if(typeof v === 'number') return v;
+    if(typeof v.toMillis === 'function'){ try{ return v.toMillis(); }catch(e){} }
+    if(typeof v.seconds === 'number') return v.seconds * 1000;
+    return 0;
+  },
+  isParent(){ return !!(Sync.user && PARENT_EMAILS.indexOf(Sync.user.email) >= 0); },
+  docId(){ return 'g8review_' + (Sync.user ? Sync.user.uid : ''); },
+  init(adapter){
+    Sync.adapter = adapter; Sync.offline = false;
+    adapter.onAuth(function(user){
+      Sync.user = user;
+      if(!user){
+        /* 登出:只清計時器;dirty 保留,同帳號下次登入才會補傳未上傳的作答 */
+        clearTimeout(Sync.timer); Sync.timer = 0;
+        Sync.pending = false;
+        Sync.saveMeta();
+        /* error 狀態保留(如 redirect 登入失敗),讓未登入列看得到錯誤代碼 */
+        if(Sync.status.state !== 'error') Sync.status = { state:'idle', msg:'' };
+      }
+      renderAuthBar();
+      updateParentTab();
+      if(user) Sync.onLogin();
+    });
+    renderAuthBar();
+  },
+  // 登入成功:抓雲端 doc → resolveSync 決策 → 採雲端 / 上傳 / 合併後上傳
+  // 若本地資料屬於別的帳號(ownerUid 不同):不上傳本地,備份後改採當前帳號的雲端資料
+  async onLogin(){
+    try{
+      Sync.setStatus('syncing');
+      const uid = Sync.user.uid;
+      if(Sync.meta.ownerUid && Sync.meta.ownerUid !== uid){
+        clearTimeout(Sync.timer); Sync.timer = 0; Sync.pending = false;
+        try{ localStorage.setItem(LS_KEY + '_backup_' + Sync.meta.ownerUid, JSON.stringify(store)); }catch(e){}
+        const doc0 = await Sync.adapter.fetchDoc(Sync.docId());
+        const cs0 = (doc0 && doc0.store && typeof doc0.store === 'object') ? Core.sanitizeStore(doc0.store) : null;
+        store = cs0 || Core.newStore(); /* sanitizeStore 已是全新白名單物件,直接採用 */
+        Sync.meta = { ownerUid: uid, dirty: false,
+                      lastSyncAt: doc0 ? (Sync.tsToMs(doc0.updatedAt) || Date.now()) : 0 };
+        Sync.saveMeta();
+        saveStore({ silent: true });
+        rerenderAll();
+        Sync.setStatus('ok');
+        return;
+      }
+      if(Sync.meta.ownerUid !== uid){ Sync.meta.ownerUid = uid; Sync.saveMeta(); }
+      const cloudDoc = await Sync.adapter.fetchDoc(Sync.docId());
+      const cloudStore = (cloudDoc && cloudDoc.store && typeof cloudDoc.store === 'object')
+        ? Core.sanitizeStore(cloudDoc.store) : null;
+      const cloudUpdatedAt = cloudDoc ? Sync.tsToMs(cloudDoc.updatedAt) : 0;
+      const r = Core.resolveSync(store, cloudStore, Sync.meta.dirty, cloudUpdatedAt, Sync.meta.lastSyncAt);
+      if(r.action === 'useCloud' || r.action === 'merge'){
+        store = r.store;
+        saveStore({ silent: true });
+        rerenderAll();
+      }
+      if(r.action === 'useCloud'){
+        Sync.meta.dirty = false;
+        Sync.meta.lastSyncAt = cloudUpdatedAt || Date.now();
+        Sync.saveMeta();
+        Sync.setStatus('ok');
+      } else if(r.action === 'none'){
+        Sync.setStatus('ok');
+      } else { // upload | merge
+        await Sync.uploadNow();
+      }
+    }catch(err){
+      Sync.setStatus('error', Sync.errMsg(err));
+    }
+  },
+  scheduleUpload(){
+    if(!Sync.user || !Sync.adapter) return;
+    clearTimeout(Sync.timer);
+    Sync.timer = setTimeout(function(){ Sync.uploadNow(); }, 3000);
+  },
+  // 競態防護:inFlight 時只標記 pending 不並發;上傳期間又有變動(seq 前進)則不清 dirty、立即補傳
+  async uploadNow(){
+    if(!Sync.user || !Sync.adapter) return;
+    if(Sync.inFlight){ Sync.pending = true; return; }
+    clearTimeout(Sync.timer); Sync.timer = 0;
+    Sync.inFlight = true;
+    const uploadingSeq = Sync.seq;
+    try{
+      Sync.setStatus('syncing');
+      const payload = {
+        app: 'g8review',
+        name: Sync.user.displayName || '',   // 個資最小化:不上傳 email(uid 已是 doc id)
+        updatedAt: Date.now(),
+        store: store
+      };
+      await Sync.adapter.saveDoc(Sync.docId(), payload);
+      Sync.meta.lastSyncAt = payload.updatedAt;
+      if(uploadingSeq === Sync.seq){
+        Sync.meta.dirty = false;
+        Sync.saveMeta();
+        Sync.setStatus('ok');
+      } else {
+        Sync.saveMeta();
+        Sync.pending = true; /* 上傳期間又有新變動 → 保持 dirty,立即再傳 */
+      }
+    }catch(err){
+      Sync.setStatus('error', Sync.errMsg(err));
+    }finally{
+      Sync.inFlight = false;
+      if(Sync.pending){ Sync.pending = false; Sync.uploadNow(); }
+    }
+  }
+};
+window.__g8 = { Core: Core, Sync: Sync, getStore: function(){ return store; } };
+/*SYNC-END*/
 
 /* ---------- 資料與狀態 ---------- */
 const SUBJECTS = [
@@ -328,13 +681,18 @@ function loadStore(){
       const s = JSON.parse(raw);
       if(s && s.v === 1){
         if(!s.days) s.days = {}; /* 舊資料(v1 無 days)就地升級,錯題本與統計不動 */
+        if(!s.wrongGone) s.wrongGone = {}; /* v1.2.1 起的錯題墓碑欄位 */
         return s;
       }
     }
   }catch(e){}
   return Core.newStore();
 }
-function saveStore(){ try{ localStorage.setItem(LS_KEY, JSON.stringify(store)); }catch(e){} }
+/* opts.silent = 採用雲端資料等系統性寫入,不標記 dirty、不觸發上傳 */
+function saveStore(opts){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(store)); }catch(e){}
+  if(!(opts && opts.silent)) Sync.markDirty();
+}
 let store = loadStore();
 const selected = new Set(SUBJECTS.filter(s => subjLoaded(s.key)).map(s => s.key));
 
@@ -354,7 +712,11 @@ function resolveQ(id){
 (function cleanWrongStore(){
   let dirty = false;
   Object.keys(store.wrong).forEach(id => {
-    if(!resolveQ(id)){ delete store.wrong[id]; dirty = true; }
+    if(!resolveQ(id)){
+      delete store.wrong[id];
+      store.wrongGone[id] = Date.now(); /* 留墓碑,避免合併時從另一裝置復活 */
+      dirty = true;
+    }
   });
   if(dirty) saveStore();
 })();
@@ -370,7 +732,7 @@ function unitName(id){
 const subjName = k => (SUBJECTS.find(s => s.key === k) || { name:k }).name;
 
 /* ---------- 畫面切換 ---------- */
-const VIEWS = ['home','quiz','result','wrong','stats'];
+const VIEWS = ['home','quiz','result','wrong','stats','parent'];
 /* 測驗進行中 = 有題、還沒答完、且目前停在測驗畫面(finishQuiz 後 quiz.i >= length 即非進行中) */
 function quizActive(){
   return quiz.list.length > 0 && quiz.i < quiz.list.length &&
@@ -389,7 +751,16 @@ function show(v){
   if(v === 'home') renderHome();
   if(v === 'wrong') renderWrong();
   if(v === 'stats') renderStats();
+  if(v === 'parent') renderParent();
   window.scrollTo(0, 0);
+}
+/* 雲端資料採用/合併後,重畫目前停留的畫面 */
+function rerenderAll(){
+  renderHome();
+  const cur = VIEWS.find(v => !document.getElementById('view-' + v).classList.contains('hidden'));
+  if(cur === 'wrong') renderWrong();
+  if(cur === 'stats') renderStats();
+  if(cur === 'parent') renderParent();
 }
 document.querySelectorAll('nav button').forEach(b =>
   b.addEventListener('click', () => show(b.dataset.tab)));
@@ -601,9 +972,10 @@ function renderToday(){
     '今日已答 ' + t.a + ' 題.正確率 ' + (rate === null ? '--' : rate + '%') +
     '<div class="tc-sub">' + t.m + '/' + t.d + '.答對 ' + t.c + ' 題</div>';
 }
-/* 近 14 天每日答題數:雙色堆疊長條(下=答對 good、上=答錯 bad) */
-function renderDailyChart(){
-  const days = Core.lastNDays(store, 14);
+/* 近 14 天每日答題數:雙色堆疊長條(下=答對 good、上=答錯 bad)
+   拆成可傳入任意 store 的建構函式,家長儀表板重用 */
+function buildDailyChartSVG(st){
+  const days = Core.lastNDays(st, 14);
   const W = 360, H = 190, padL = 30, padR = 6, padT = 10, padB = 24;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const sc = niceScale(Math.max.apply(null, days.map(d => d.a)));
@@ -638,7 +1010,10 @@ function renderDailyChart(){
   s += '<div class="chart-legend">' +
     '<span><span class="lg-dot" style="background:var(--good)"></span>答對</span>' +
     '<span><span class="lg-dot" style="background:var(--bad)"></span>答錯</span></div>';
-  document.getElementById('chartDaily').innerHTML = s;
+  return s;
+}
+function renderDailyChart(){
+  document.getElementById('chartDaily').innerHTML = buildDailyChartSVG(store);
 }
 /* 近 14 天正確率趨勢折線,無作答日留空不連線 */
 function renderTrendChart(){
@@ -709,24 +1084,24 @@ function renderSubjChart(){
   box.innerHTML = s;
 }
 
+/* 五科正確率橫條列(可傳入任意 store,家長儀表板重用) */
+function buildSubjRowsHTML(st){
+  return SUBJECTS.map(function(s){
+    const t = Core.subjectStats(st, s.key);
+    return '<div class="stat-row">' +
+      '<span class="sname">' + s.name + '</span>' +
+      '<span class="stat-bar"><i style="width:' + (t.rate || 0) + '%;background:' + s.color + '"></i></span>' +
+      '<span class="stat-num">' + t.a + ' 題.' + (t.rate === null ? '--' : t.rate + '%') + '</span></div>';
+  }).join('');
+}
+
 /* ---------- 統計 ---------- */
 function renderStats(){
   renderToday();
   renderDailyChart();
   renderTrendChart();
   renderSubjChart();
-  const box = document.getElementById('statSubj');
-  box.textContent = '';
-  SUBJECTS.forEach(s => {
-    const st = Core.subjectStats(store, s.key);
-    const row = document.createElement('div');
-    row.className = 'stat-row';
-    row.innerHTML =
-      '<span class="sname">' + s.name + '</span>' +
-      '<span class="stat-bar"><i style="width:' + (st.rate || 0) + '%;background:' + s.color + '"></i></span>' +
-      '<span class="stat-num">' + st.a + ' 題.' + (st.rate === null ? '--' : st.rate + '%') + '</span>';
-    box.appendChild(row);
-  });
+  document.getElementById('statSubj').innerHTML = buildSubjRowsHTML(store);
   const weak = document.getElementById('statWeak');
   weak.textContent = '';
   const ws = Core.weakUnits(store, 3);
@@ -745,6 +1120,114 @@ function renderStats(){
   document.getElementById('verLine').textContent = '國二五科複習快測 v' + APP_VERSION;
 }
 
+/* ---------- 登入同步列 ---------- */
+function fmtHM(ms){
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function fmtDT(ms){
+  const d = new Date(ms);
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + fmtHM(ms);
+}
+function renderAuthBar(){
+  const bar = document.getElementById('authBar');
+  if(!bar) return;
+  bar.textContent = '';
+  if(Sync.offline){
+    bar.innerHTML = '<span>離線,雲端同步暫停(功能不受影響)</span>';
+    return;
+  }
+  if(!Sync.adapter){
+    bar.innerHTML = '<span>雲端同步準備中…</span>';
+    return;
+  }
+  if(!Sync.user){
+    const b = document.createElement('button');
+    b.className = 'auth-btn'; b.id = 'btnLogin';
+    b.textContent = '使用 Google 登入以同步';
+    b.addEventListener('click', function(){ Sync.adapter.signIn(); });
+    bar.appendChild(b);
+    if(Sync.status.state === 'error'){ /* redirect 登入失敗等錯誤代碼 */
+      const er = document.createElement('span');
+      er.className = 'auth-status err';
+      er.textContent = '登入失敗:' + Sync.status.msg;
+      bar.appendChild(er);
+    }
+    return;
+  }
+  const nm = document.createElement('span');
+  nm.className = 'auth-name';
+  nm.textContent = Sync.user.displayName || Sync.user.email || '';
+  const st = document.createElement('span');
+  st.className = 'auth-status';
+  if(Sync.status.state === 'syncing'){ st.textContent = '同步中…'; }
+  else if(Sync.status.state === 'error'){ st.classList.add('err'); st.textContent = '同步失敗:' + Sync.status.msg; }
+  else if(Sync.meta.lastSyncAt){ st.classList.add('ok'); st.textContent = '已同步 ' + fmtHM(Sync.meta.lastSyncAt); }
+  else { st.textContent = ''; }
+  const out = document.createElement('button');
+  out.className = 'auth-btn'; out.id = 'btnLogout';
+  out.textContent = '登出';
+  out.addEventListener('click', function(){ Sync.adapter.signOut(); });
+  bar.appendChild(nm); bar.appendChild(st); bar.appendChild(out);
+}
+
+/* ---------- 家長儀表板 ---------- */
+function updateParentTab(){
+  const btn = document.getElementById('navParent');
+  const isP = Sync.isParent();
+  btn.classList.toggle('hidden', !isP);
+  if(!isP && !document.getElementById('view-parent').classList.contains('hidden')) show('home');
+}
+async function renderParent(){
+  const box = document.getElementById('parentList');
+  if(!Sync.isParent() || !Sync.adapter){
+    box.innerHTML = '<div class="empty">此頁僅家長帳號登入後可用</div>';
+    return;
+  }
+  box.innerHTML = '<div class="empty">載入中…</div>';
+  let docs;
+  try{
+    docs = await Sync.adapter.listDocs();
+  }catch(err){
+    box.innerHTML = '<div class="empty">載入失敗:' + esc(Sync.errMsg(err)) + '</div>';
+    return;
+  }
+  const kids = (docs || []).filter(function(d){
+    return d && d.id !== Sync.docId() && d.data && d.data.store && typeof d.data.store === 'object';
+  });
+  if(!kids.length){
+    box.innerHTML = '<div class="empty">還沒有孩子的雲端紀錄</div>';
+    return;
+  }
+  box.textContent = '';
+  kids.forEach(function(k){ box.appendChild(buildKidCard(k)); });
+}
+function buildKidCard(k){
+  const st = Core.sanitizeStore(k.data.store); /* 白名單重建:雲端資料不可信,防 XSS/污染 */
+  const t = Core.lastNDays(st, 1)[0];
+  const rate = t.a ? Math.round(100 * t.c / t.a) : null;
+  const wrongN = Object.keys(st.wrong || {}).length;
+  const weak = Core.weakUnits(st, 3);
+  const upd = Sync.tsToMs(k.data.updatedAt);
+  const card = document.createElement('div');
+  card.className = 'kid-card';
+  card.innerHTML =
+    '<div class="kid-head"><span class="kid-name">' + esc(k.data.name || k.data.email || k.id) + '</span>' +
+      '<span class="kid-upd">' + (upd ? '更新 ' + fmtDT(upd) : '') + '</span></div>' +
+    '<div class="kid-today">今日已答 ' + t.a + ' 題.正確率 ' + (rate === null ? '--' : rate + '%') +
+      '.錯題本 ' + wrongN + ' 題</div>' +
+    '<div class="chart-card">' + buildDailyChartSVG(st) + '</div>' +
+    buildSubjRowsHTML(st) +
+    (weak.length
+      ? '<div class="stat-row"><span style="flex:1;font-size:.9rem"><span class="pill">最弱單元</span>' +
+        '<span class="pill">' + esc(subjName(weak[0].s)) + '</span>' + esc(unitName(weak[0].id)) + '</span>' +
+        '<span class="stat-num" style="color:var(--bad)">錯 ' + Math.round(weak[0].err * 100) + '%(' +
+        (weak[0].a - weak[0].c) + '/' + weak[0].a + ')</span></div>'
+      : '<div class="kid-today" style="color:var(--muted);margin-bottom:0">還沒有足夠資料分析弱單元</div>');
+  return card;
+}
+document.getElementById('btnParentRefresh').addEventListener('click', renderParent);
+
 /* ---------- PWA ---------- */
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => {
@@ -754,6 +1237,73 @@ if('serviceWorker' in navigator){
 
 renderHome();
 show('home');
+renderAuthBar();
+</script>
+
+<!-- Firebase 雲端同步(沿用 speed-training-base 專案;動態 import,離線/載入失敗不影響 App) -->
+<script type="module">
+(async function(){
+  const G8 = window.__g8;
+  if(!G8) return;
+  /* 測試鉤子:?nofb=1 模擬 SDK 載入失敗(離線情境) */
+  if(/[?&]nofb=1/.test(location.search)){ G8.Sync.setOffline(); return; }
+  let appMod, authMod, fsMod;
+  try{
+    const base = 'https://www.gstatic.com/firebasejs/10.12.2/';
+    appMod = await import(base + 'firebase-app.js');
+    authMod = await import(base + 'firebase-auth.js');
+    fsMod = await import(base + 'firebase-firestore.js');
+  }catch(e){ G8.Sync.setOffline(); return; }
+  let auth, db;
+  try{
+    const firebaseConfig = {
+      apiKey: "AIzaSyAbyytsv6KoDKGunZ2WYru9gHNYhqOc46A",
+      authDomain: "speed-training-base.firebaseapp.com",
+      projectId: "speed-training-base",
+      storageBucket: "speed-training-base.firebasestorage.app",
+      messagingSenderId: "608450867846",
+      appId: "1:608450867846:web:3aa98d3a0eba122af1d707"
+    };
+    const app = appMod.initializeApp(firebaseConfig);
+    auth = authMod.getAuth(app);
+    db = fsMod.getFirestore(app);
+  }catch(e){ G8.Sync.setOffline(); return; }
+  const provider = new authMod.GoogleAuthProvider();
+  const adapter = {
+    onAuth(cb){
+      authMod.onAuthStateChanged(auth, function(u){
+        cb(u ? { uid: u.uid, email: u.email || '', displayName: u.displayName || '' } : null);
+      });
+    },
+    async signIn(){
+      try{
+        await authMod.signInWithPopup(auth, provider);
+      }catch(err){
+        const code = err && err.code;
+        if(code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return;
+        /* popup 失敗(常見於 iOS PWA)→ 自動改用 redirect */
+        try{ await authMod.signInWithRedirect(auth, provider); }
+        catch(e2){ G8.Sync.setStatus('error', G8.Sync.errMsg(e2)); }
+      }
+    },
+    signOut(){ return authMod.signOut(auth); },
+    async fetchDoc(id){
+      const snap = await fsMod.getDoc(fsMod.doc(db, 'logs', id));
+      return snap.exists() ? snap.data() : null;
+    },
+    saveDoc(id, payload){ return fsMod.setDoc(fsMod.doc(db, 'logs', id), payload); },
+    async listDocs(){
+      const q = fsMod.query(fsMod.collection(db, 'logs'), fsMod.where('app', '==', 'g8review'));
+      const rs = await fsMod.getDocs(q);
+      const out = [];
+      rs.forEach(function(d){ out.push({ id: d.id, data: d.data() }); });
+      return out;
+    }
+  };
+  try{ await authMod.getRedirectResult(auth); }
+  catch(e){ G8.Sync.setStatus('error', G8.Sync.errMsg(e)); }
+  G8.Sync.init(adapter);
+})();
 </script>
 </body>
 </html>
