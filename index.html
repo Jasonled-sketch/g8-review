@@ -232,7 +232,7 @@ nav .ico{font-size:1.25rem; line-height:1;}
 
 <script>
 'use strict';
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.2.2';
 const LS_KEY = 'g8review_v1';
 
 /*CORE-START*/
@@ -556,7 +556,8 @@ const Sync = {
     return 0;
   },
   isParent(){ return !!(Sync.user && PARENT_EMAILS.indexOf(Sync.user.email) >= 0); },
-  docId(){ return 'g8review_' + (Sync.user ? Sync.user.uid : ''); },
+  /* 文件 id = uid 本身(Firestore 規則 match /g8review/{userId} 以 uid 比對) */
+  docId(){ return Sync.user ? Sync.user.uid : ''; },
   init(adapter){
     Sync.adapter = adapter; Sync.offline = false;
     adapter.onAuth(function(user){
@@ -1288,12 +1289,12 @@ renderAuthBar();
     },
     signOut(){ return authMod.signOut(auth); },
     async fetchDoc(id){
-      const snap = await fsMod.getDoc(fsMod.doc(db, 'logs', id));
+      const snap = await fsMod.getDoc(fsMod.doc(db, 'g8review', id));
       return snap.exists() ? snap.data() : null;
     },
-    saveDoc(id, payload){ return fsMod.setDoc(fsMod.doc(db, 'logs', id), payload); },
+    saveDoc(id, payload){ return fsMod.setDoc(fsMod.doc(db, 'g8review', id), payload); },
     async listDocs(){
-      const q = fsMod.query(fsMod.collection(db, 'logs'), fsMod.where('app', '==', 'g8review'));
+      const q = fsMod.collection(db, 'g8review');
       const rs = await fsMod.getDocs(q);
       const out = [];
       rs.forEach(function(d){ out.push({ id: d.id, data: d.data() }); });
