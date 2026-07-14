@@ -112,6 +112,50 @@ button{font:inherit; color:inherit; border:0; cursor:pointer;}
 .chart-legend{display:flex; flex-wrap:wrap; gap:6px 14px; padding:8px 6px 4px; font-size:.8rem; color:var(--muted);}
 .chart-legend .lg-dot{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px;}
 
+/* 月曆(v1.3.0) */
+.cal{background:var(--card); border-radius:var(--r); padding:10px;}
+.cal-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;}
+.cal-nav{min-width:44px; min-height:44px; background:var(--card2); border-radius:10px;
+  font-size:1.15rem; color:var(--text);}
+.cal-title{font-weight:800; font-size:.98rem;}
+.cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:3px;}
+.cal-wd{text-align:center; color:var(--muted); font-size:.7rem; padding:2px 0;}
+.cal-cell{min-height:48px; background:var(--card2); border-radius:8px; padding:3px 1px 2px;
+  display:flex; flex-direction:column; align-items:center; gap:0;
+  font-size:.72rem; border:2px solid transparent; line-height:1.15;}
+.cal-cell.blank{background:none; border:0;}
+.cal-cell.today{border-color:var(--accent);}
+.cal-cell.sel{border-color:var(--warn);}
+.cal-d{font-size:.76rem; color:var(--muted);}
+.cal-ok{color:var(--good); font-weight:700;}
+.cal-ng{color:var(--bad); font-weight:700;}
+.cal-detail{margin-top:10px; border-top:1px solid var(--line); padding-top:8px;}
+.cal-detail-head{font-weight:700; font-size:.9rem; margin-bottom:4px;}
+.cal-detail-row{display:flex; gap:10px; padding:5px 0; font-size:.88rem;
+  border-bottom:1px solid var(--line);}
+.cal-detail-row:last-child{border-bottom:0;}
+.cal-detail-row .cdr-name{font-weight:700; width:3.2em; flex:none;}
+
+/* 綜合累積(v1.3.0) */
+.seen-card{background:var(--card); border-radius:var(--r); padding:8px 14px;}
+.seen-row{display:flex; gap:8px; padding:7px 0; border-bottom:1px solid var(--line);
+  font-size:.84rem; align-items:baseline;}
+.seen-row:last-child{border-bottom:0;}
+.seen-row .sname{font-weight:700; width:3.2em; flex:none;}
+.seen-txt{color:var(--muted);}
+.seen-total .seen-txt{color:var(--text); font-weight:700;}
+
+/* 今日複習卡(v1.3.0) */
+.review-card{background:var(--card); border:2px solid var(--warn); border-radius:var(--r);
+  padding:12px 14px; margin-top:12px;}
+.review-card .rc-title{font-weight:800; color:var(--warn);}
+.review-none{color:var(--muted); font-size:.88rem; background:var(--card);
+  border-radius:var(--r); padding:12px 14px; margin-top:12px;}
+
+/* 家長卡隱藏鈕(v1.3.0) */
+.kid-hide{background:var(--card); border:1px solid var(--line); border-radius:9px;
+  color:var(--muted); font-size:.78rem; padding:10px 14px; min-height:44px; min-width:44px; flex:none;}
+
 /* 登入同步列 */
 .auth-bar{display:flex; align-items:center; gap:8px; flex-wrap:wrap;
   min-height:34px; font-size:.78rem; color:var(--muted); margin-bottom:6px;}
@@ -125,7 +169,10 @@ button{font:inherit; color:inherit; border:0; cursor:pointer;}
   padding:12px; margin-bottom:14px;}
 .kid-card .stat-row{background:var(--card);}
 .kid-card .chart-card{background:var(--card); margin-bottom:8px; padding:10px 8px 6px;}
-.kid-head{display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px;}
+.kid-card .cal{margin-bottom:8px;}
+.kid-card .seen-card{margin-bottom:8px;}
+.kid-head{display:flex; justify-content:flex-start; align-items:center; gap:8px; margin-bottom:6px;}
+.kid-head .kid-upd{margin-left:auto;} /* 名字靠左,更新時間靠右,隱藏鈕排最右 */
 .kid-name{font-weight:800; font-size:1.05rem; word-break:break-all;}
 .kid-upd{color:var(--muted); font-size:.75rem; flex:none;}
 .kid-today{font-size:.9rem; margin-bottom:8px;}
@@ -155,6 +202,7 @@ nav .ico{font-size:1.25rem; line-height:1;}
     <p class="sub">勾選科目,隨機抽 10 題快速測驗</p>
     <div class="subj-grid" id="subjGrid"></div>
     <button class="btn" id="btnStart">開始快測</button>
+    <div id="reviewBox"></div>
   </section>
 
   <!-- 測驗 -->
@@ -185,7 +233,7 @@ nav .ico{font-size:1.25rem; line-height:1;}
   <!-- 錯題本 -->
   <section id="view-wrong" class="hidden">
     <h1>錯題本</h1>
-    <p class="sub">答錯自動收錄;同一題累計答對 2 次自動移出</p>
+    <p class="sub">答錯自動收錄;按 1→3→7→14 天間隔複習,連過四關自動畢業移出</p>
     <button class="btn" id="btnRetestWrong">重測錯題</button>
     <div id="wrongList" style="margin-top:14px"></div>
   </section>
@@ -196,6 +244,10 @@ nav .ico{font-size:1.25rem; line-height:1;}
     <div class="today-card" id="statToday"></div>
     <h2>近 14 天每日答題</h2>
     <div class="chart-card" id="chartDaily"></div>
+    <h2>月曆(每日答對/答錯)</h2>
+    <div id="calStats"></div>
+    <h2>綜合累積</h2>
+    <div id="statSeen"></div>
     <h2>正確率趨勢(近 14 天)</h2>
     <div class="chart-card" id="chartTrend"></div>
     <h2>科目答題分布</h2>
@@ -232,12 +284,20 @@ nav .ico{font-size:1.25rem; line-height:1;}
 
 <script>
 'use strict';
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.3.0';
 const LS_KEY = 'g8review_v1';
 
 /*CORE-START*/
 const Core = {
-  newStore(){ return { v:1, subj:{}, unit:{}, wrong:{}, days:{}, wrongGone:{} }; },
+  newStore(){ return { v:1, subj:{}, unit:{}, wrong:{}, days:{}, wrongGone:{}, seen:{} }; },
+  /* 間隔複習排程(v1.3.0):stage 0-3 → 下次複習 +1/+3/+7/+14 天,四關畢業 */
+  SCHEDULE: [1, 3, 7, 14],
+  DUE_RE: /^\d{4}-\d{2}-\d{2}$/,
+  // YYYY-MM-DD 加 n 天(本地時區)
+  addDays(dateStr, n){
+    const p = String(dateStr).split('-').map(Number);
+    return Core.localDate(new Date(p[0], p[1] - 1, p[2] + n));
+  },
   // 當地日期字串 YYYY-MM-DD(本地時區,不用 toISOString 以免跨日誤差)
   localDate(d){
     d = d || new Date();
@@ -294,8 +354,10 @@ const Core = {
     });
     return pool;
   },
-  // 記一筆作答:科別/單元統計 + 每日紀錄 + 錯題本進出(答錯進本、累計答對2次移出、再錯歸零)
-  // date 可省略,預設當地今日(YYYY-MM-DD)
+  // 記一筆作答:科別/單元統計 + 每日紀錄 + 逐題累積(seen)+ 錯題間隔複習排程(v1.3.0)
+  //   答錯:stage=0,due=明天(既有條目再錯也 reset)
+  //   答對且在錯題本:stage+1;滿四關畢業移出(留墓碑),否則 due=今天+SCHEDULE[新stage]
+  // date 可省略,預設當地今日(YYYY-MM-DD),due 以其為基準
   record(store, item, correct, date){
     const s = store.subj[item.subj] || (store.subj[item.subj] = { a:0, c:0 });
     s.a++; if(correct) s.c++;
@@ -307,20 +369,127 @@ const Core = {
     ds.a++; if(correct) ds.c++;
     const u = store.unit[item.unitId] || (store.unit[item.unitId] = { a:0, c:0, s:item.subj });
     u.a++; if(correct) u.c++;
+    if(!store.seen) store.seen = {};
+    const sn = store.seen[item.id] || (store.seen[item.id] = { a:0, c:0 });
+    sn.a++; if(correct) sn.c++;
     if(correct){
       const w = store.wrong[item.id];
-      if(w){
-        w.k = (w.k || 0) + 1;
-        w.t = Date.now(); /* 連對進度也算最新狀態,合併時才不會被舊紀錄壓回 */
-        if(w.k >= 2){
+      /* 只有「到期」的答對才晉級;未到期被隨機抽中答對不動狀態,維持遺忘間隔 */
+      if(w && (typeof w.due !== 'string' || w.due <= dk)){
+        const st = (typeof w.stage === 'number' ? w.stage : 0) + 1;
+        if(st >= Core.SCHEDULE.length){
           delete store.wrong[item.id];
           if(!store.wrongGone) store.wrongGone = {};
           store.wrongGone[item.id] = Date.now(); /* 墓碑:合併時壓過另一裝置的舊錯題 */
+        } else {
+          w.stage = st;
+          w.due = Core.addDays(dk, Core.SCHEDULE[st]);
+          w.t = Date.now(); /* 過關進度也算最新狀態,合併時才不會被舊紀錄壓回 */
         }
       }
     } else {
-      store.wrong[item.id] = { k:0, t:Date.now() };
+      store.wrong[item.id] = { stage:0, due:Core.addDays(dk, Core.SCHEDULE[0]), t:Date.now() };
     }
+  },
+  // 到期複習題 id 清單(due <= today;缺 due 視同到期)
+  dueWrongIds(store, today){
+    today = today || Core.localDate();
+    return Object.keys(store.wrong || {}).filter(function(id){
+      const w = store.wrong[id];
+      return !!w && (typeof w.due !== 'string' || w.due <= today);
+    });
+  },
+  // 舊存檔就地遷移(v1.3.0):wrong 連對制(k)→ 間隔複習制(stage/due=明天);補 seen
+  migrateStore(s){
+    if(!s || typeof s !== 'object') return s;
+    if(!s.seen) s.seen = {};
+    const w = s.wrong || {};
+    const tomorrow = Core.addDays(Core.localDate(), 1);
+    Object.keys(w).forEach(function(id){
+      const e = w[id];
+      if(!e || typeof e !== 'object') return;
+      if(typeof e.stage !== 'number'){
+        e.stage = Math.min(Math.max(Math.floor(Number(e.k) || 0), 0), 3);
+        e.due = tomorrow;
+        delete e.k;
+      }
+      if(typeof e.due !== 'string' || !Core.DUE_RE.test(e.due)) e.due = tomorrow;
+    });
+    return s;
+  },
+  // 綜合累積(v1.3.0):totals={科key:總題數};回傳各科 {seen,total,once,att,cor,rate}
+  seenStats(store, totals, validIds){
+    const out = {};
+    Object.keys(totals || {}).forEach(function(k){
+      out[k] = { seen:0, total:totals[k] || 0, once:0, att:0, cor:0, rate:null };
+    });
+    const seen = store.seen || {};
+    Object.keys(seen).forEach(function(id){
+      if(validIds && !validIds.has(id)) return; /* 濾掉題庫已不存在的題號,避免統計膨脹 */
+      const r = out[id.split('|')[0]];
+      const s = seen[id];
+      if(!r || !s) return;
+      r.seen++;
+      if((s.c || 0) > 0) r.once++;
+      r.att += s.a || 0; r.cor += s.c || 0;
+    });
+    Object.keys(out).forEach(function(k){
+      const r = out[k];
+      if(r.att) r.rate = Math.round(100 * r.cor / r.att);
+    });
+    return out;
+  },
+  CAL_SUBJ: [['chinese','國文'],['english','英文'],['math','數學'],['science','自然'],['social','社會']],
+  // 月曆視圖(v1.3.0,純函式):y=西元年、m=1-12;sel=展開明細的 YYYY-MM-DD;today 可注入供測試
+  // 週一起始;每日格:日期 + 綠答對數/紅答錯數;今日框線高亮
+  renderCalendar(store, y, m, sel, today){
+    today = today || Core.localDate();
+    const days = (store && store.days) || {};
+    const p2 = function(n){ return String(n).padStart(2, '0'); };
+    let h = '<div class="cal">';
+    h += '<div class="cal-head">' +
+      '<button class="cal-nav" data-cal="prev" aria-label="上個月">&#8249;</button>' +
+      '<span class="cal-title">' + y + ' 年 ' + m + ' 月</span>' +
+      '<button class="cal-nav" data-cal="next" aria-label="下個月">&#8250;</button></div>';
+    h += '<div class="cal-grid">';
+    ['一','二','三','四','五','六','日'].forEach(function(w){ h += '<span class="cal-wd">' + w + '</span>'; });
+    const lead = (new Date(y, m - 1, 1).getDay() + 6) % 7; /* 週一起始 */
+    for(let i = 0; i < lead; i++) h += '<span class="cal-cell blank"></span>';
+    const dim = new Date(y, m, 0).getDate();
+    for(let d = 1; d <= dim; d++){
+      const key = y + '-' + p2(m) + '-' + p2(d);
+      const rec = days[key];
+      const a = rec ? (rec.a || 0) : 0, c = rec ? (rec.c || 0) : 0;
+      let cls = 'cal-cell';
+      if(key === today) cls += ' today';
+      if(key === sel) cls += ' sel';
+      h += '<button class="' + cls + '" data-date="' + key + '"><span class="cal-d">' + d + '</span>' +
+        (a > 0 ? '<span class="cal-ok">' + c + '</span><span class="cal-ng">' + (a - c) + '</span>' : '') +
+        '</button>';
+    }
+    h += '</div>';
+    if(sel){
+      const rec = days[sel];
+      const sp = sel.split('-');
+      h += '<div class="cal-detail"><div class="cal-detail-head">' + Number(sp[1]) + '/' + Number(sp[2]) + ' 各科明細</div>';
+      let any = false;
+      if(rec && rec.subj){
+        Core.CAL_SUBJ.forEach(function(pair){
+          const s = rec.subj[pair[0]];
+          if(!s || !s.a) return;
+          any = true;
+          h += '<div class="cal-detail-row"><span class="cdr-name">' + pair[1] + '</span>' +
+            '<span>答對 <b class="cal-ok">' + (s.c || 0) + '</b>.答錯 <b class="cal-ng">' + (s.a - (s.c || 0)) + '</b></span></div>';
+        });
+      }
+      if(!any){
+        h += '<div class="cal-detail-row" style="color:var(--muted)">' +
+          (rec && rec.a ? '此日僅有總數(舊資料無科目明細)' : '這天沒有作答紀錄') + '</div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+    return h;
   },
   subjectStats(store, key){
     const s = store.subj[key];
@@ -411,18 +580,34 @@ const Core = {
       });
     });
     if(subjLossy) subj = Core.mergeMapByA(L.subj, C.subj);
-    /* wrong:聯集,同 id 取 t 較新者,k 取兩邊較大值(避免連對進度回退) */
+    /* seen(v1.3.0):逐 key a 取大、c 取大後夾 <= a(避免任一裝置進度回退) */
+    const seen = {};
+    const lsn = L.seen || {}, csn = C.seen || {};
+    const seenKeys = {};
+    Object.keys(lsn).forEach(function(k){ if(lsn[k]) seenKeys[k] = 1; });
+    Object.keys(csn).forEach(function(k){ if(csn[k]) seenKeys[k] = 1; });
+    Object.keys(seenKeys).forEach(function(k){
+      const x = lsn[k] || {}, y = csn[k] || {};
+      const a = Math.max(x.a || 0, y.a || 0);
+      seen[k] = { a: a, c: Math.min(Math.max(x.c || 0, y.c || 0), a) };
+    });
+    /* wrong:聯集;同 id 取「t 較新」那邊的 stage/due(最新事件優先——
+       答錯 reset 必須壓過另一裝置的舊高關數,否則間隔複習狀態機被破壞) */
     const wrong = {};
     const lw = L.wrong || {}, cw = C.wrong || {};
     Object.keys(lw).forEach(function(k){
-      if(lw[k]) wrong[k] = { k: lw[k].k || 0, t: lw[k].t || 0 };
+      if(lw[k]) wrong[k] = { stage: lw[k].stage || 0, due: lw[k].due || '', t: lw[k].t || 0 };
     });
     Object.keys(cw).forEach(function(k){
       const w2 = cw[k];
       if(!w2) return;
-      if(!(k in wrong)){ wrong[k] = { k: w2.k || 0, t: w2.t || 0 }; return; }
+      if(!(k in wrong)){ wrong[k] = { stage: w2.stage || 0, due: w2.due || '', t: w2.t || 0 }; return; }
       const w1 = wrong[k];
-      wrong[k] = { k: Math.max(w1.k, w2.k || 0), t: Math.max(w1.t, w2.t || 0) };
+      const newer = ((w2.t || 0) > (w1.t || 0)) ? w2 : w1;
+      wrong[k] = { stage: newer.stage || 0, due: newer.due || '', t: Math.max(w1.t || 0, w2.t || 0) };
+    });
+    Object.keys(wrong).forEach(function(k){
+      if(!Core.DUE_RE.test(wrong[k].due)) wrong[k].due = Core.localDate();
     });
     /* wrongGone:聯集取新;墓碑比錯題新 → 錯題不進合併結果;逾 90 天修剪 */
     const wrongGone = {};
@@ -443,6 +628,7 @@ const Core = {
       subj: subj,
       unit: Core.mergeMapByA(L.unit, C.unit),
       days: days,
+      seen: seen,
       wrong: wrong,
       wrongGone: wrongGone
     }));
@@ -458,7 +644,7 @@ const Core = {
     };
     const okKey = function(k){ return typeof k === 'string' && k.length > 0 && k.length <= MAX_KEY; };
     const src = (raw && typeof raw === 'object') ? raw : {};
-    const out = { v:1, subj:{}, unit:{}, days:{}, wrong:{}, wrongGone:{} };
+    const out = { v:1, subj:{}, unit:{}, days:{}, seen:{}, wrong:{}, wrongGone:{} };
     const cleanAC = function(rec){
       if(!rec || typeof rec !== 'object') return null;
       const a = num(rec.a, MAX_CNT);
@@ -487,9 +673,19 @@ const Core = {
       });
       out.days[k] = { a: r.a, c: r.c, subj: subj };
     });
+    eachKey(src.seen, function(k, v){
+      const r = cleanAC(v); if(r) out.seen[k] = r;
+    });
     eachKey(src.wrong, function(k, v){
       if(!v || typeof v !== 'object') return;
-      out.wrong[k] = { k: num(v.k, MAX_CNT), t: num(v.t, MAX_TS) };
+      /* stage:0-3 整數;舊 k 制(無 stage)以 min(k,3) 遷移 */
+      let stage = Number(v.stage);
+      if(v.stage == null && v.k != null) stage = Math.min(num(v.k, MAX_CNT), 3);
+      if(typeof stage !== 'number' || !isFinite(stage)) stage = 0;
+      stage = Math.min(Math.max(Math.floor(stage), 0), 3);
+      /* due:YYYY-MM-DD,不合法一律設今天(視同到期) */
+      const due = (typeof v.due === 'string' && Core.DUE_RE.test(v.due)) ? v.due : Core.localDate();
+      out.wrong[k] = { stage: stage, due: due, t: num(v.t, MAX_TS) };
     });
     eachKey(src.wrongGone, function(k, v){
       const t = num(v, MAX_TS);
@@ -683,7 +879,7 @@ function loadStore(){
       if(s && s.v === 1){
         if(!s.days) s.days = {}; /* 舊資料(v1 無 days)就地升級,錯題本與統計不動 */
         if(!s.wrongGone) s.wrongGone = {}; /* v1.2.1 起的錯題墓碑欄位 */
-        return s;
+        return Core.migrateStore(s); /* v1.3.0:wrong k 制→stage/due、補 seen */
       }
     }
   }catch(e){}
@@ -791,6 +987,33 @@ function renderHome(){
     grid.appendChild(btn);
   });
   document.getElementById('btnStart').disabled = selected.size === 0;
+  renderReviewBox();
+}
+/* 今日複習卡(v1.3.0):到期 N>0 → 複習入口;N=0 且錯題本非空 → 提示 */
+function renderReviewBox(){
+  const box = document.getElementById('reviewBox');
+  const dueN = dueWrongPool().length;
+  const wrongN = Object.keys(store.wrong).length;
+  box.textContent = '';
+  if(dueN > 0){
+    const card = document.createElement('div');
+    card.className = 'review-card';
+    card.innerHTML = '<div class="rc-title">今日複習</div>' +
+      '<div class="tc-sub">到期的錯題,先複習再前進</div>';
+    const b = document.createElement('button');
+    b.className = 'btn small';
+    b.style.background = 'var(--warn)';
+    b.style.color = '#1a1408';
+    b.textContent = '今日複習 ' + dueN + ' 題';
+    b.addEventListener('click', retestWrong);
+    card.appendChild(b);
+    box.appendChild(card);
+  } else if(wrongN > 0){
+    const d = document.createElement('div');
+    d.className = 'review-none';
+    d.textContent = '今日沒有到期的複習(錯題本共 ' + wrongN + ' 題)';
+    box.appendChild(d);
+  }
 }
 
 /* ---------- 測驗 ---------- */
@@ -898,8 +1121,8 @@ function finishQuiz(){
 }
 document.getElementById('btnAgain').addEventListener('click', () => {
   if(quiz.retest){
-    if(!wrongPool().length){
-      alert('目前沒有錯題可以重測,先去測驗累積吧!');
+    if(!dueWrongPool().length){
+      alert('目前沒有到期的錯題,今天的複習完成了!');
       show('wrong');
       return;
     }
@@ -919,25 +1142,46 @@ function wrongPool(){
   });
   return pool;
 }
+/* 到期複習題池(due <= 今天;v1.3.0) */
+function dueWrongPool(){
+  const today = Core.localDate();
+  return wrongPool().filter(it => {
+    const w = store.wrong[it.id];
+    return !!w && (typeof w.due !== 'string' || w.due <= today);
+  });
+}
+/* YYYY-MM-DD → M/D */
+function fmtDue(due){
+  if(typeof due !== 'string') return '--';
+  const p = due.split('-');
+  return Number(p[1]) + '/' + Number(p[2]);
+}
 function renderWrong(){
   const list = document.getElementById('wrongList');
   list.textContent = '';
   const pool = wrongPool()
     .sort((a, b) => (store.wrong[b.id].t || 0) - (store.wrong[a.id].t || 0));
-  document.getElementById('btnRetestWrong').disabled = pool.length === 0;
+  const dueN = dueWrongPool().length;
+  const btn = document.getElementById('btnRetestWrong');
+  btn.disabled = dueN === 0;
+  btn.textContent = dueN > 0 ? '重測到期錯題(' + dueN + ' 題)' : '今日沒有到期的複習';
   if(!pool.length){
     list.innerHTML = '<div class="empty">目前沒有錯題,太強了!</div>';
     return;
   }
+  const today = Core.localDate();
   const LABEL = ['A','B','C','D'];
   pool.forEach(it => {
     const w = store.wrong[it.id];
+    const isDue = typeof w.due !== 'string' || w.due <= today;
     const d = document.createElement('div');
     d.className = 'wrong-item';
     const pills = document.createElement('div');
     pills.innerHTML = '<span class="pill">' + it.subjName + '</span>' +
       '<span class="pill">' + it.unitName + '</span>' +
-      '<span class="pill">已連對 ' + (w.k || 0) + '/2</span>';
+      '<span class="pill">第 ' + ((w.stage || 0) + 1) + ' 關</span>' +
+      '<span class="pill"' + (isDue ? ' style="color:var(--warn)"' : '') + '>' +
+      (isDue ? '今日可複習' : '下次複習 ' + fmtDue(w.due)) + '</span>';
     const q = document.createElement('div'); q.className = 'wq'; q.textContent = it.q.q;
     const a = document.createElement('div'); a.className = 'wq';
     a.style.color = 'var(--good)'; a.style.marginTop = '4px'; a.style.fontSize = '.85rem';
@@ -947,7 +1191,7 @@ function renderWrong(){
   });
 }
 function retestWrong(){
-  const pool = wrongPool();
+  const pool = dueWrongPool(); /* v1.3.0:只測到期題 */
   if(pool.length) startQuiz(pool, true);
 }
 document.getElementById('btnRetestWrong').addEventListener('click', retestWrong);
@@ -1096,10 +1340,73 @@ function buildSubjRowsHTML(st){
   }).join('');
 }
 
+/* ---------- 月曆掛載(v1.3.0):換月 ‹ › + 點日展開明細,家長儀表板重用 ---------- */
+function mountCalendar(box, getStore){
+  const now = new Date();
+  const st = { y: now.getFullYear(), m: now.getMonth() + 1, sel: '' };
+  function draw(){ box.innerHTML = Core.renderCalendar(getStore(), st.y, st.m, st.sel); }
+  box.addEventListener('click', function(ev){
+    const b = ev.target.closest('button');
+    if(!b || !box.contains(b)) return;
+    if(b.dataset.cal === 'prev'){
+      st.m--; if(st.m < 1){ st.m = 12; st.y--; }
+      st.sel = ''; draw();
+    } else if(b.dataset.cal === 'next'){
+      st.m++; if(st.m > 12){ st.m = 1; st.y++; }
+      st.sel = ''; draw();
+    } else if(b.dataset.date){
+      st.sel = (st.sel === b.dataset.date) ? '' : b.dataset.date;
+      draw();
+    }
+  });
+  draw();
+  return { redraw: draw };
+}
+
+/* ---------- 綜合累積(v1.3.0):可傳入任意 store,家長儀表板重用 ---------- */
+function subjTotals(){
+  const t = {};
+  SUBJECTS.forEach(function(s){
+    let n = 0;
+    const qb = QB[s.key];
+    if(qb && Array.isArray(qb.units)) qb.units.forEach(function(u){ n += (u.questions || []).length; });
+    t[s.key] = n;
+  });
+  return t;
+}
+let _validIdSet = null;
+function validIdSet(){
+  if(!_validIdSet) _validIdSet = new Set(Core.buildPool(QB, SUBJECTS.map(s => s.key)).map(p => p.id));
+  return _validIdSet;
+}
+function buildSeenHTML(st){
+  const stats = Core.seenStats(st, subjTotals(), validIdSet());
+  let anyAtt = false, tSeen = 0, tAll = 0, tOnce = 0, tAtt = 0, tCor = 0;
+  const rows = SUBJECTS.map(function(s){
+    const r = stats[s.key] || { seen:0, total:0, once:0, att:0, cor:0, rate:null };
+    tSeen += r.seen; tAll += r.total; tOnce += r.once; tAtt += r.att; tCor += r.cor;
+    if(r.att) anyAtt = true;
+    return '<div class="seen-row"><span class="sname">' + s.name + '</span>' +
+      '<span class="seen-txt">做過 ' + r.seen + '/' + r.total + ' 題.答對過 ' + r.once +
+      ' 題.累計 ' + r.att + ' 次作答.正確率 ' + (r.rate === null ? '--' : r.rate + '%') + '</span></div>';
+  }).join('');
+  const tRate = tAtt ? Math.round(100 * tCor / tAtt) : null;
+  return '<div class="seen-card">' + rows +
+    '<div class="seen-row seen-total"><span class="sname">合計</span>' +
+    '<span class="seen-txt">做過 ' + tSeen + '/' + tAll + ' 題.答對過 ' + tOnce +
+    ' 題.累計 ' + tAtt + ' 次作答.正確率 ' + (tRate === null ? '--' : tRate + '%') + '</span></div>' +
+    (anyAtt ? '' : '<div class="tc-sub" style="padding:4px 0 2px">逐題累積自 v1.3.0 起計,之前的作答不在此列</div>') +
+    '</div>';
+}
+
 /* ---------- 統計 ---------- */
+let statsCal = null;
 function renderStats(){
   renderToday();
   renderDailyChart();
+  if(!statsCal) statsCal = mountCalendar(document.getElementById('calStats'), function(){ return store; });
+  else statsCal.redraw();
+  document.getElementById('statSeen').innerHTML = buildSeenHTML(store);
   renderTrendChart();
   renderSubjChart();
   document.getElementById('statSubj').innerHTML = buildSubjRowsHTML(store);
@@ -1179,6 +1486,20 @@ function updateParentTab(){
   btn.classList.toggle('hidden', !isP);
   if(!isP && !document.getElementById('view-parent').classList.contains('hidden')) show('home');
 }
+/* 隱藏孩子清單(v1.3.0,只存本機) */
+const PARENT_HIDDEN_KEY = 'g8review_parent_hidden';
+let parentShowHidden = false;
+let parentKidsCache = null; /* 最近一次 listDocs 結果,隱藏/顯示切換免重抓 */
+function getHiddenKids(){
+  try{
+    const a = JSON.parse(localStorage.getItem(PARENT_HIDDEN_KEY));
+    if(Array.isArray(a)) return a.filter(function(x){ return typeof x === 'string'; });
+  }catch(e){}
+  return [];
+}
+function setHiddenKids(a){
+  try{ localStorage.setItem(PARENT_HIDDEN_KEY, JSON.stringify(a)); }catch(e){}
+}
 async function renderParent(){
   const box = document.getElementById('parentList');
   if(!Sync.isParent() || !Sync.adapter){
@@ -1193,17 +1514,44 @@ async function renderParent(){
     box.innerHTML = '<div class="empty">載入失敗:' + esc(Sync.errMsg(err)) + '</div>';
     return;
   }
-  const kids = (docs || []).filter(function(d){
+  parentKidsCache = (docs || []).filter(function(d){
     return d && d.id !== Sync.docId() && d.data && d.data.store && typeof d.data.store === 'object';
   });
+  renderParentList();
+}
+/* 用快取資料重畫清單(隱藏切換走這裡,不重抓雲端) */
+function renderParentList(){
+  const box = document.getElementById('parentList');
+  const kids = parentKidsCache || [];
   if(!kids.length){
     box.innerHTML = '<div class="empty">還沒有孩子的雲端紀錄</div>';
     return;
   }
+  const hidden = getHiddenKids();
+  const vis = kids.filter(function(k){ return hidden.indexOf(k.id) < 0; });
+  const hid = kids.filter(function(k){ return hidden.indexOf(k.id) >= 0; });
   box.textContent = '';
-  kids.forEach(function(k){ box.appendChild(buildKidCard(k)); });
+  vis.forEach(function(k){ box.appendChild(buildKidCard(k, false)); });
+  if(!vis.length){
+    const d = document.createElement('div');
+    d.className = 'empty';
+    d.textContent = '所有孩子都被隱藏了';
+    box.appendChild(d);
+  }
+  if(hid.length){
+    const tg = document.createElement('button');
+    tg.className = 'btn ghost small';
+    tg.textContent = (parentShowHidden ? '收合已隱藏的孩子(' : '顯示已隱藏的孩子(') + hid.length + ')';
+    tg.addEventListener('click', function(){ parentShowHidden = !parentShowHidden; renderParentList(); });
+    box.appendChild(tg);
+    if(parentShowHidden){
+      hid.forEach(function(k){ box.appendChild(buildKidCard(k, true)); });
+    }
+  } else {
+    parentShowHidden = false;
+  }
 }
-function buildKidCard(k){
+function buildKidCard(k, isHidden){
   const st = Core.sanitizeStore(k.data.store); /* 白名單重建:雲端資料不可信,防 XSS/污染 */
   const t = Core.lastNDays(st, 1)[0];
   const rate = t.a ? Math.round(100 * t.c / t.a) : null;
@@ -1212,12 +1560,14 @@ function buildKidCard(k){
   const upd = Sync.tsToMs(k.data.updatedAt);
   const card = document.createElement('div');
   card.className = 'kid-card';
+  if(isHidden) card.style.opacity = '.65';
   card.innerHTML =
     '<div class="kid-head"><span class="kid-name">' + esc(k.data.name || k.data.email || k.id) + '</span>' +
       '<span class="kid-upd">' + (upd ? '更新 ' + fmtDT(upd) : '') + '</span></div>' +
     '<div class="kid-today">今日已答 ' + t.a + ' 題.正確率 ' + (rate === null ? '--' : rate + '%') +
       '.錯題本 ' + wrongN + ' 題</div>' +
-    '<div class="chart-card">' + buildDailyChartSVG(st) + '</div>' +
+    '<div class="kid-cal"></div>' +
+    buildSeenHTML(st) +
     buildSubjRowsHTML(st) +
     (weak.length
       ? '<div class="stat-row"><span style="flex:1;font-size:.9rem"><span class="pill">最弱單元</span>' +
@@ -1225,6 +1575,19 @@ function buildKidCard(k){
         '<span class="stat-num" style="color:var(--bad)">錯 ' + Math.round(weak[0].err * 100) + '%(' +
         (weak[0].a - weak[0].c) + '/' + weak[0].a + ')</span></div>'
       : '<div class="kid-today" style="color:var(--muted);margin-bottom:0">還沒有足夠資料分析弱單元</div>');
+  /* 右上「隱藏 / 取消隱藏」小鈕 */
+  const hideBtn = document.createElement('button');
+  hideBtn.className = 'kid-hide';
+  hideBtn.textContent = isHidden ? '取消隱藏' : '隱藏';
+  hideBtn.addEventListener('click', function(){
+    const h = getHiddenKids();
+    if(isHidden){ setHiddenKids(h.filter(function(x){ return x !== k.id; })); }
+    else if(h.indexOf(k.id) < 0){ h.push(k.id); setHiddenKids(h); }
+    renderParentList();
+  });
+  card.querySelector('.kid-head').appendChild(hideBtn);
+  /* 月曆(v1.3.0):取代原 14 天長條圖,預設當月、可換月、點日看明細 */
+  mountCalendar(card.querySelector('.kid-cal'), function(){ return st; });
   return card;
 }
 document.getElementById('btnParentRefresh').addEventListener('click', renderParent);

@@ -1,7 +1,7 @@
 /* 國二五科複習快測 service worker — cache-first
    改版務必 bump APP_VERSION(與 index.html 內 APP_VERSION 同步),才會更新快取 */
 'use strict';
-const APP_VERSION = '1.2.2';
+const APP_VERSION = '1.3.0';
 const CACHE_NAME = 'g8review-' + APP_VERSION;
 
 /* 相對路徑,支援 GitHub Pages 子路徑部署 */
