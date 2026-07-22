@@ -124,8 +124,14 @@ button{font:inherit; color:inherit; border:0; cursor:pointer;}
   display:flex; flex-direction:column; align-items:center; gap:0;
   font-size:.72rem; border:2px solid transparent; line-height:1.15;}
 .cal-cell.blank{background:none; border:0;}
+/* 達標/未達標底色(v1.4.0);today / sel 的框線要壓過,故排在前面 */
+.cal-cell.done{background:rgba(62,207,142,.14);}
+.cal-cell.miss{background:rgba(242,85,90,.13); border-color:rgba(242,85,90,.38);}
 .cal-cell.today{border-color:var(--accent);}
 .cal-cell.sel{border-color:var(--warn);}
+.cal-mk{font-size:.6rem; font-weight:700; color:var(--warn); line-height:1;}
+.cal-mk-btn{width:100%; min-height:44px; margin-top:8px; border-radius:10px;
+  background:var(--warn); color:#1a1408; font-weight:800; font-size:.9rem;}
 .cal-d{font-size:.76rem; color:var(--muted);}
 .cal-ok{color:var(--good); font-weight:700;}
 .cal-ng{color:var(--bad); font-weight:700;}
@@ -151,6 +157,17 @@ button{font:inherit; color:inherit; border:0; cursor:pointer;}
 .review-card .rc-title{font-weight:800; color:var(--warn);}
 .review-none{color:var(--muted); font-size:.88rem; background:var(--card);
   border-radius:var(--r); padding:12px 14px; margin-top:12px;}
+
+/* 補做登錄卡(v1.4.0) */
+.makeup-card{background:var(--card); border:2px solid var(--bad); border-radius:var(--r);
+  padding:12px 14px; margin-top:12px;}
+.makeup-card .mc-title{font-weight:800; color:var(--bad);}
+.mk-days{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px;}
+.mk-day{flex:1 1 84px; min-height:52px; background:var(--card2); border:1px solid var(--line);
+  border-radius:10px; color:var(--text); display:flex; flex-direction:column;
+  align-items:center; justify-content:center; gap:2px; padding:6px 4px;}
+.mk-day .mk-d{font-weight:800; font-size:.95rem;}
+.mk-day .mk-n{font-size:.7rem; color:var(--muted);}
 
 /* 家長卡隱藏鈕(v1.3.0) */
 .kid-hide{background:var(--card); border:1px solid var(--line); border-radius:9px;
@@ -203,6 +220,7 @@ nav .ico{font-size:1.25rem; line-height:1;}
     <div class="subj-grid" id="subjGrid"></div>
     <button class="btn" id="btnStart">開始快測</button>
     <div id="reviewBox"></div>
+    <div id="makeupBox"></div>
   </section>
 
   <!-- 測驗 -->
@@ -244,7 +262,8 @@ nav .ico{font-size:1.25rem; line-height:1;}
     <div class="today-card" id="statToday"></div>
     <h2>近 14 天每日答題</h2>
     <div class="chart-card" id="chartDaily"></div>
-    <h2>月曆(每日答對/答錯)</h2>
+    <h2>月曆(每日達標與答對/答錯)</h2>
+    <p class="sub">綠底=當天做滿 10 題;紅底=未達標,點日期可補登(限 7 天內)</p>
     <div id="calStats"></div>
     <h2>綜合累積</h2>
     <div id="statSeen"></div>
@@ -284,7 +303,7 @@ nav .ico{font-size:1.25rem; line-height:1;}
 
 <script>
 'use strict';
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const LS_KEY = 'g8review_v1';
 
 /*CORE-START*/
@@ -293,6 +312,9 @@ const Core = {
   /* 間隔複習排程(v1.3.0):stage 0-3 → 下次複習 +1/+3/+7/+14 天,四關畢業 */
   SCHEDULE: [1, 3, 7, 14],
   DUE_RE: /^\d{4}-\d{2}-\d{2}$/,
+  /* 補做(v1.4.0):每日預定題數;未達標的過去日期可在 MAKEUP_DAYS 天內補登 */
+  DAILY_GOAL: 10,
+  MAKEUP_DAYS: 7,
   // YYYY-MM-DD 加 n 天(本地時區)
   addDays(dateStr, n){
     const p = String(dateStr).split('-').map(Number);
@@ -358,13 +380,17 @@ const Core = {
   //   答錯:stage=0,due=明天(既有條目再錯也 reset)
   //   答對且在錯題本:stage+1;滿四關畢業移出(留墓碑),否則 due=今天+SCHEDULE[新stage]
   // date 可省略,預設當地今日(YYYY-MM-DD),due 以其為基準
-  record(store, item, correct, date){
+  // makeup(v1.4.0):補做模式——統計記回 date 那天(補平月曆缺口)並累計 day.mk;
+  //   但遺忘間隔一律以「今天」起算,否則補舊日期會算出過期的 due 而立刻又到期
+  record(store, item, correct, date, makeup){
     const s = store.subj[item.subj] || (store.subj[item.subj] = { a:0, c:0 });
     s.a++; if(correct) s.c++;
     if(!store.days) store.days = {};
     const dk = date || Core.localDate();
+    const sd = makeup ? Core.localDate() : dk; /* 錯題排程基準日 */
     const day = store.days[dk] || (store.days[dk] = { a:0, c:0, subj:{} });
     day.a++; if(correct) day.c++;
+    if(makeup) day.mk = (day.mk || 0) + 1;
     const ds = day.subj[item.subj] || (day.subj[item.subj] = { a:0, c:0 });
     ds.a++; if(correct) ds.c++;
     const u = store.unit[item.unitId] || (store.unit[item.unitId] = { a:0, c:0, s:item.subj });
@@ -375,7 +401,7 @@ const Core = {
     if(correct){
       const w = store.wrong[item.id];
       /* 只有「到期」的答對才晉級;未到期被隨機抽中答對不動狀態,維持遺忘間隔 */
-      if(w && (typeof w.due !== 'string' || w.due <= dk)){
+      if(w && (typeof w.due !== 'string' || w.due <= sd)){
         const st = (typeof w.stage === 'number' ? w.stage : 0) + 1;
         if(st >= Core.SCHEDULE.length){
           delete store.wrong[item.id];
@@ -383,13 +409,59 @@ const Core = {
           store.wrongGone[item.id] = Date.now(); /* 墓碑:合併時壓過另一裝置的舊錯題 */
         } else {
           w.stage = st;
-          w.due = Core.addDays(dk, Core.SCHEDULE[st]);
+          w.due = Core.addDays(sd, Core.SCHEDULE[st]);
           w.t = Date.now(); /* 過關進度也算最新狀態,合併時才不會被舊紀錄壓回 */
         }
       }
     } else {
-      store.wrong[item.id] = { stage:0, due:Core.addDays(dk, Core.SCHEDULE[0]), t:Date.now() };
+      store.wrong[item.id] = { stage:0, due:Core.addDays(sd, Core.SCHEDULE[0]), t:Date.now() };
     }
+  },
+  /* --- 每日達標與補做(v1.4.0) --- */
+  // 某日達標狀態:'future'(未來)|'today'(今天,進行中不算漏)|'done'(>=DAILY_GOAL)|'miss'(未達標)
+  dayStatus(store, key, today){
+    today = today || Core.localDate();
+    if(key > today) return 'future';
+    const rec = ((store && store.days) || {})[key];
+    const a = rec ? (rec.a || 0) : 0;
+    if(a >= Core.DAILY_GOAL) return 'done';
+    return key === today ? 'today' : 'miss';
+  },
+  // 可補做的日期:昨天往回數 MAKEUP_DAYS 天內、未達標者;新→舊
+  //   回傳 [{date, a, c, mk, need}],need=還差幾題才達標
+  missedDays(store, today, n){
+    today = today || Core.localDate();
+    n = n || Core.MAKEUP_DAYS;
+    const days = (store && store.days) || {};
+    const out = [];
+    for(let i = 1; i <= n; i++){
+      const key = Core.addDays(today, -i);
+      if(Core.dayStatus(store, key, today) !== 'miss') continue;
+      const rec = days[key] || {};
+      const a = rec.a || 0;
+      out.push({ date:key, a:a, c:rec.c || 0, mk:rec.mk || 0, need:Core.DAILY_GOAL - a });
+    }
+    return out;
+  },
+  // 該日期現在能不能按補登(過去 MAKEUP_DAYS 天內、且未達標)
+  canMakeup(store, key, today){
+    today = today || Core.localDate();
+    if(!Core.DUE_RE.test(String(key))) return false;
+    if(key >= today || key < Core.addDays(today, -Core.MAKEUP_DAYS)) return false;
+    return Core.dayStatus(store, key, today) === 'miss';
+  },
+  // 近 n 天(不含今天)達標概況,給家長卡用:{days, hit, miss, mk}
+  goalSummary(store, today, n){
+    today = today || Core.localDate();
+    n = n || Core.MAKEUP_DAYS;
+    const days = (store && store.days) || {};
+    let hit = 0, mk = 0;
+    for(let i = 1; i <= n; i++){
+      const key = Core.addDays(today, -i);
+      if(Core.dayStatus(store, key, today) === 'done') hit++;
+      mk += (days[key] && days[key].mk) || 0;
+    }
+    return { days:n, hit:hit, miss:n - hit, mk:mk };
   },
   // 到期複習題 id 清單(due <= today;缺 due 視同到期)
   dueWrongIds(store, today){
@@ -442,9 +514,17 @@ const Core = {
   CAL_SUBJ: [['chinese','國文'],['english','英文'],['math','數學'],['science','自然'],['social','社會']],
   // 月曆視圖(v1.3.0,純函式):y=西元年、m=1-12;sel=展開明細的 YYYY-MM-DD;today 可注入供測試
   // 週一起始;每日格:日期 + 綠答對數/紅答錯數;今日框線高亮
-  renderCalendar(store, y, m, sel, today){
+  // v1.4.0:達標(>=DAILY_GOAL)綠底、未達標紅底、含補做題數加「補」章;
+  //   opts.makeup=true 時,選中的可補日會多出補登鈕(僅小孩本人的月曆傳,家長卡唯讀)
+  renderCalendar(store, y, m, sel, today, opts){
     today = today || Core.localDate();
+    opts = opts || {};
     const days = (store && store.days) || {};
+    /* 有紀錄以來的第一天:更早的空白日不標未達標,免得整個 2020 年一片紅 */
+    let firstDay = '';
+    Object.keys(days).forEach(function(k){
+      if(days[k] && (days[k].a || 0) > 0 && (!firstDay || k < firstDay)) firstDay = k;
+    });
     const p2 = function(n){ return String(n).padStart(2, '0'); };
     let h = '<div class="cal">';
     h += '<div class="cal-head">' +
@@ -460,11 +540,16 @@ const Core = {
       const key = y + '-' + p2(m) + '-' + p2(d);
       const rec = days[key];
       const a = rec ? (rec.a || 0) : 0, c = rec ? (rec.c || 0) : 0;
+      const mk = rec ? (rec.mk || 0) : 0;
+      const stt = Core.dayStatus(store, key, today);
       let cls = 'cal-cell';
+      if(stt === 'done') cls += ' done';
+      else if(stt === 'miss' && firstDay && key >= firstDay) cls += ' miss';
       if(key === today) cls += ' today';
       if(key === sel) cls += ' sel';
       h += '<button class="' + cls + '" data-date="' + key + '"><span class="cal-d">' + d + '</span>' +
         (a > 0 ? '<span class="cal-ok">' + c + '</span><span class="cal-ng">' + (a - c) + '</span>' : '') +
+        (mk > 0 ? '<span class="cal-mk">補</span>' : '') +
         '</button>';
     }
     h += '</div>';
@@ -485,6 +570,22 @@ const Core = {
       if(!any){
         h += '<div class="cal-detail-row" style="color:var(--muted)">' +
           (rec && rec.a ? '此日僅有總數(舊資料無科目明細)' : '這天沒有作答紀錄') + '</div>';
+      }
+      /* v1.4.0:達標進度 + 補做題數 + 補登入口 */
+      const sa = rec ? (rec.a || 0) : 0, smk = rec ? (rec.mk || 0) : 0;
+      const sst = Core.dayStatus(store, sel, today);
+      let prog = '進度 ' + sa + '/' + Core.DAILY_GOAL + ' 題';
+      if(sst === 'done') prog += '.<b class="cal-ok">已達標</b>';
+      else if(sst === 'today') prog += '.今天還差 ' + (Core.DAILY_GOAL - sa) + ' 題';
+      else if(sst === 'miss') prog += '.<b class="cal-ng">未達標</b>';
+      if(smk > 0) prog += '(其中 ' + smk + ' 題補做)';
+      h += '<div class="cal-detail-row" style="color:var(--muted)">' + prog + '</div>';
+      if(opts.makeup && Core.canMakeup(store, sel, today)){
+        h += '<button class="cal-mk-btn" data-mk="' + sel + '">補登這天.做 ' +
+          Core.DAILY_GOAL + ' 題</button>';
+      } else if(sst === 'miss' && !Core.canMakeup(store, sel, today) && opts.makeup){
+        h += '<div class="cal-detail-row" style="color:var(--muted)">超過 ' +
+          Core.MAKEUP_DAYS + ' 天就不能補登了</div>';
       }
       h += '</div>';
     }
@@ -568,6 +669,9 @@ const Core = {
         days[k] = { a: (rec && rec.a) || 0, c: (rec && rec.c) || 0, subj: {} };
         if(((rec && rec.a) || 0) > 0) subjLossy = true;
       }
+      /* mk(v1.4.0):兩邊取大並夾在當日答題數內(同一天在兩裝置各補一次,取多的那邊) */
+      const mk = Math.min(Math.max((dl && dl.mk) || 0, (dc && dc.mk) || 0), days[k].a);
+      if(mk > 0) days[k].mk = mk;
     });
     /* subj:由合併後 days 重算,保證與每日圖一致;
        若有舊格式日資料(無科目明細),重算會漏,退回逐科取大 */
@@ -672,6 +776,8 @@ const Core = {
         const sr = cleanAC(sv); if(sr) subj[sk] = sr;
       });
       out.days[k] = { a: r.a, c: r.c, subj: subj };
+      const mk = Math.min(num(v.mk, MAX_CNT), r.a); /* v1.4.0 補做題數,不可超過當日答題數 */
+      if(mk > 0) out.days[k].mk = mk;
     });
     eachKey(src.seen, function(k, v){
       const r = cleanAC(v); if(r) out.seen[k] = r;
@@ -988,6 +1094,7 @@ function renderHome(){
   });
   document.getElementById('btnStart').disabled = selected.size === 0;
   renderReviewBox();
+  renderMakeupBox();
 }
 /* 今日複習卡(v1.3.0):到期 N>0 → 複習入口;N=0 且錯題本非空 → 提示 */
 function renderReviewBox(){
@@ -1017,13 +1124,14 @@ function renderReviewBox(){
 }
 
 /* ---------- 測驗 ---------- */
-const quiz = { list:[], i:0, correct:0, answers:[], t0:0, timerId:0, retest:false };
+const quiz = { list:[], i:0, correct:0, answers:[], t0:0, timerId:0, retest:false, mkDate:'' };
 
-function startQuiz(pool, retest){
+/* mkDate(v1.4.0):補做模式,成績記回該日期 */
+function startQuiz(pool, retest, mkDate){
   if(!pool.length) return;
-  quiz.list = Core.pick(pool, 10);
+  quiz.list = Core.pick(pool, Core.DAILY_GOAL);
   quiz.i = 0; quiz.correct = 0; quiz.answers = [];
-  quiz.t0 = Date.now(); quiz.retest = !!retest;
+  quiz.t0 = Date.now(); quiz.retest = !!retest; quiz.mkDate = mkDate || '';
   show('quiz');
   clearInterval(quiz.timerId);
   quiz.timerId = setInterval(() => {
@@ -1042,7 +1150,8 @@ document.getElementById('btnQuit').addEventListener('click', () => show('home'))
 
 function renderQuestion(){
   const item = quiz.list[quiz.i];
-  document.getElementById('quizProg').textContent = '第 ' + (quiz.i + 1) + ' / ' + quiz.list.length + ' 題' + (quiz.retest ? '(錯題重測)' : '');
+  document.getElementById('quizProg').textContent = '第 ' + (quiz.i + 1) + ' / ' + quiz.list.length + ' 題' +
+    (quiz.retest ? '(錯題重測)' : quiz.mkDate ? '(補做 ' + fmtDue(quiz.mkDate) + ')' : '');
   document.getElementById('quizBar').style.width = (quiz.i / quiz.list.length * 100) + '%';
   document.getElementById('quizUnit').textContent = item.subjName + '.' + item.unitName + (item.semester === '8a' ? '(八上)' : item.semester === '8b' ? '(八下)' : '');
   document.getElementById('quizQ').textContent = item.q.q;
@@ -1067,7 +1176,7 @@ function answer(idx){
   const ok = idx === item.q.a;
   if(ok) quiz.correct++;
   quiz.answers.push({ item:item, picked:idx, ok:ok });
-  Core.record(store, item, ok);
+  Core.record(store, item, ok, quiz.mkDate || null, !!quiz.mkDate);
   saveStore();
   document.getElementById('quizBar').style.width = ((quiz.i + 1) / quiz.list.length * 100) + '%';
   const btns = document.querySelectorAll('#quizOpts .opt');
@@ -1100,7 +1209,8 @@ function finishQuiz(){
   show('result');
   document.getElementById('resScore').textContent = quiz.correct + ' / ' + quiz.list.length;
   document.getElementById('resMeta').textContent =
-    '得分 ' + Math.round(quiz.correct / quiz.list.length * 100) + ' 分.用時 ' + fmtSec(sec);
+    '得分 ' + Math.round(quiz.correct / quiz.list.length * 100) + ' 分.用時 ' + fmtSec(sec) +
+    (quiz.mkDate ? '.已補登到 ' + fmtDue(quiz.mkDate) : '');
   const rv = document.getElementById('resReview');
   rv.textContent = '';
   const LABEL = ['A','B','C','D'];
@@ -1120,7 +1230,11 @@ function finishQuiz(){
   });
 }
 document.getElementById('btnAgain').addEventListener('click', () => {
-  if(quiz.retest){
+  if(quiz.mkDate){
+    /* 補做完再按「再測一次」:該日還沒補滿就續補,補滿了就回一般快測 */
+    if(Core.canMakeup(store, quiz.mkDate)) startMakeup(quiz.mkDate, true);
+    else startQuiz(Core.buildPool(QB, [...selected]), false);
+  } else if(quiz.retest){
     if(!dueWrongPool().length){
       alert('目前沒有到期的錯題,今天的複習完成了!');
       show('wrong');
@@ -1196,6 +1310,50 @@ function retestWrong(){
 }
 document.getElementById('btnRetestWrong').addEventListener('click', retestWrong);
 
+/* ---------- 補做登錄(v1.4.0) ---------- */
+/* 補做用全科題池,不受首頁勾選影響——補的是「那天該做的 10 題」 */
+function makeupPool(){
+  return Core.buildPool(QB, SUBJECTS.filter(s => subjLoaded(s.key)).map(s => s.key));
+}
+function startMakeup(dateKey, skipConfirm){
+  if(!Core.canMakeup(store, dateKey)){
+    alert('這天不能補登了(已達標,或超過 ' + Core.MAKEUP_DAYS + ' 天)');
+    renderHome();
+    if(statsCal) statsCal.redraw();
+    return;
+  }
+  const d = fmtDue(dateKey);
+  if(!skipConfirm && !confirm('補做 ' + d + ' 的 ' + Core.DAILY_GOAL + ' 題?\n' +
+    '成績會記在 ' + d + ',並標示為補做')) return;
+  const pool = makeupPool();
+  if(!pool.length){ alert('題庫未載入,無法補做'); return; }
+  startQuiz(pool, false, dateKey);
+}
+/* 首頁補做卡:列出近 7 天未達標的日子,點一下直接補 */
+function renderMakeupBox(){
+  const box = document.getElementById('makeupBox');
+  box.textContent = '';
+  const miss = Core.missedDays(store);
+  if(!miss.length) return;
+  const card = document.createElement('div');
+  card.className = 'makeup-card';
+  card.innerHTML = '<div class="mc-title">補做登錄</div>' +
+    '<div class="tc-sub">近 ' + Core.MAKEUP_DAYS + ' 天有 ' + miss.length + ' 天沒做滿 ' +
+    Core.DAILY_GOAL + ' 題,點日期補登</div>';
+  const row = document.createElement('div');
+  row.className = 'mk-days';
+  miss.forEach(function(d){
+    const b = document.createElement('button');
+    b.className = 'mk-day';
+    b.innerHTML = '<span class="mk-d">' + fmtDue(d.date) + '</span>' +
+      '<span class="mk-n">' + (d.a ? d.a + '/' + Core.DAILY_GOAL : '沒做') + '</span>';
+    b.addEventListener('click', function(){ startMakeup(d.date); });
+    row.appendChild(b);
+  });
+  card.appendChild(row);
+  box.appendChild(card);
+}
+
 /* ---------- 統計:圖表(inline SVG,無外部函式庫) ---------- */
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 /* Y 軸好看刻度:回傳 {max, step} */
@@ -1213,9 +1371,11 @@ function renderToday(){
   const days = Core.lastNDays(store, 1);
   const t = days[0];
   const rate = t.a ? Math.round(100 * t.c / t.a) : null;
+  const left = Core.DAILY_GOAL - t.a;
   document.getElementById('statToday').innerHTML =
-    '今日已答 ' + t.a + ' 題.正確率 ' + (rate === null ? '--' : rate + '%') +
-    '<div class="tc-sub">' + t.m + '/' + t.d + '.答對 ' + t.c + ' 題</div>';
+    '今日 ' + t.a + ' / ' + Core.DAILY_GOAL + ' 題.正確率 ' + (rate === null ? '--' : rate + '%') +
+    '<div class="tc-sub">' + t.m + '/' + t.d + '.答對 ' + t.c + ' 題.' +
+    (left > 0 ? '還差 ' + left + ' 題達標' : '今日已達標') + '</div>';
 }
 /* 近 14 天每日答題數:雙色堆疊長條(下=答對 good、上=答錯 bad)
    拆成可傳入任意 store 的建構函式,家長儀表板重用 */
@@ -1341,14 +1501,17 @@ function buildSubjRowsHTML(st){
 }
 
 /* ---------- 月曆掛載(v1.3.0):換月 ‹ › + 點日展開明細,家長儀表板重用 ---------- */
-function mountCalendar(box, getStore){
+/* opts.makeup=true:本人的月曆,未達標日可按補登(家長卡不傳,唯讀) */
+function mountCalendar(box, getStore, opts){
   const now = new Date();
   const st = { y: now.getFullYear(), m: now.getMonth() + 1, sel: '' };
-  function draw(){ box.innerHTML = Core.renderCalendar(getStore(), st.y, st.m, st.sel); }
+  function draw(){ box.innerHTML = Core.renderCalendar(getStore(), st.y, st.m, st.sel, null, opts); }
   box.addEventListener('click', function(ev){
     const b = ev.target.closest('button');
     if(!b || !box.contains(b)) return;
-    if(b.dataset.cal === 'prev'){
+    if(b.dataset.mk){
+      startMakeup(b.dataset.mk);
+    } else if(b.dataset.cal === 'prev'){
       st.m--; if(st.m < 1){ st.m = 12; st.y--; }
       st.sel = ''; draw();
     } else if(b.dataset.cal === 'next'){
@@ -1404,7 +1567,7 @@ let statsCal = null;
 function renderStats(){
   renderToday();
   renderDailyChart();
-  if(!statsCal) statsCal = mountCalendar(document.getElementById('calStats'), function(){ return store; });
+  if(!statsCal) statsCal = mountCalendar(document.getElementById('calStats'), function(){ return store; }, { makeup:true });
   else statsCal.redraw();
   document.getElementById('statSeen').innerHTML = buildSeenHTML(store);
   renderTrendChart();
@@ -1556,6 +1719,7 @@ function buildKidCard(k, isHidden){
   const t = Core.lastNDays(st, 1)[0];
   const rate = t.a ? Math.round(100 * t.c / t.a) : null;
   const wrongN = Object.keys(st.wrong || {}).length;
+  const gs = Core.goalSummary(st); /* v1.4.0:近 7 天達標與補做概況 */
   const weak = Core.weakUnits(st, 3);
   const upd = Sync.tsToMs(k.data.updatedAt);
   const card = document.createElement('div');
@@ -1564,8 +1728,12 @@ function buildKidCard(k, isHidden){
   card.innerHTML =
     '<div class="kid-head"><span class="kid-name">' + esc(k.data.name || k.data.email || k.id) + '</span>' +
       '<span class="kid-upd">' + (upd ? '更新 ' + fmtDT(upd) : '') + '</span></div>' +
-    '<div class="kid-today">今日已答 ' + t.a + ' 題.正確率 ' + (rate === null ? '--' : rate + '%') +
-      '.錯題本 ' + wrongN + ' 題</div>' +
+    '<div class="kid-today">今日已答 ' + t.a + ' / ' + Core.DAILY_GOAL + ' 題.正確率 ' +
+      (rate === null ? '--' : rate + '%') + '.錯題本 ' + wrongN + ' 題</div>' +
+    '<div class="kid-today" style="color:var(--muted)">近 ' + gs.days + ' 天達標 ' +
+      '<b class="' + (gs.miss ? 'cal-ng' : 'cal-ok') + '">' + gs.hit + '/' + gs.days + '</b> 天' +
+      (gs.miss ? '.漏了 ' + gs.miss + ' 天' : '') +
+      (gs.mk ? '.其中補做 ' + gs.mk + ' 題' : '') + '</div>' +
     '<div class="kid-cal"></div>' +
     buildSeenHTML(st) +
     buildSubjRowsHTML(st) +
